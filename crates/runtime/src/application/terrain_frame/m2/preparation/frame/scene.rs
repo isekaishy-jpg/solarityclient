@@ -99,15 +99,28 @@ impl M2Frame {
             .prepare_storage(cpu.storage(), receivers)?;
         // Scene callbacks run before draw admission and may sample offscreen roots.
         // Admit their shared named-bone scratch against all current source bounds.
-        self.bone_samples_scratch.reserve_cpu_storage(
-            cpu.storage(),
-            self.sources
-                .iter()
-                .flatten()
-                .map(|source| source.model.animations().bones().len())
-                .max()
-                .unwrap_or(0),
-        )?;
+        let bones = self
+            .sources
+            .iter()
+            .flatten()
+            .map(|source| source.model.animations().bones().len())
+            .max()
+            .unwrap_or(0);
+        let mut scratch = solarity_cpu::CpuStorageWorkingSet::default();
+        self.bone_samples_scratch
+            .include_cpu_storage(cpu.storage(), bones, &mut scratch)?;
+        self.bone_demand
+            .include_storage(cpu.storage(), bones, &mut scratch)?;
+        self.bone_clock_scratch
+            .include_storage(cpu.storage(), bones, &mut scratch)?;
+        let mut fund = cpu
+            .storage()
+            .reserve_working_set(solarity_cpu::CpuStorageClass::Frame, scratch.bytes())?;
+        self.bone_samples_scratch
+            .reserve_cpu_storage_reserved(&mut fund, bones)?;
+        self.bone_demand.reserve_reserved(&mut fund, bones)?;
+        self.bone_clock_scratch.reserve_reserved(&mut fund, bones)?;
+        drop(fund);
         frame_profile.mark("residency and topology");
         self.vehicle_passengers.prepare_timing(
             &mut super::super::poses::ScenePoseExecution {

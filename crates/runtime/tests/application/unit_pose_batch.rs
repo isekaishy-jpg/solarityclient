@@ -493,3 +493,37 @@ fn pose_phase_admission_protects_full_named_and_scheduler_outputs_together()
     assert_eq!(budget.snapshot().used(Class::Frame), baseline);
     Ok(())
 }
+
+#[test]
+fn unique_named_demand_matches_repeated_alias_sampling() -> Result<(), Box<dyn Error>> {
+    use super::super::super::demand::CpuBoneDemand;
+    use solarity_rendering::M2BoneTransforms;
+    let model = model()?;
+    let budget = CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(1 << 20, 0, 0));
+    let mut demand = CpuBoneDemand::default();
+    demand.begin(&budget, model.animations().bones().len())?;
+    for index in [0, 0, usize::MAX, 0] {
+        demand.bone(&model, index);
+    }
+    assert_eq!(demand.bones(), &[0]);
+    let clock = M2AnimationClock::new(0, 400., 400.);
+    let mut repeated = M2BoneSamples::default();
+    let mut unique = M2BoneSamples::default();
+    repeated.recompose(
+        model.animations(),
+        clock,
+        Mat4::IDENTITY,
+        M2BonePoseOverrides::default(),
+        &[0, 0, 0],
+    )?;
+    unique.recompose(
+        model.animations(),
+        clock,
+        Mat4::IDENTITY,
+        M2BonePoseOverrides::default(),
+        demand.bones(),
+    )?;
+    assert_eq!(unique.bone_count(), repeated.bone_count());
+    assert_eq!(unique.bone_transform(0), repeated.bone_transform(0));
+    Ok(())
+}

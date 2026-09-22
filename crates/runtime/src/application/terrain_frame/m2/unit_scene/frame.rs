@@ -14,6 +14,7 @@ impl M2Frame {
         camera: WorldCameraFrame,
         now: f32,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        let budget = super::super::preparation::poses::storage::budget(Some(cpu))?;
         for &index in self.placement_visibility.dynamic_scene_indices() {
             let placement = &self.placements[index];
             let mount = matches!(
@@ -33,7 +34,8 @@ impl M2Frame {
             };
             let playback = playback.borrow();
             let clock = playback.sample_clock(now as u32);
-            self.bone_demand.clear();
+            self.bone_demand
+                .begin(&budget, source.model.animations().bones().len())?;
             self.bone_demand.events(
                 &source.model,
                 placement.owner,
@@ -83,6 +85,7 @@ impl M2Frame {
         random: &mut CrtRand,
         mut effect_callback: Option<&mut unit_effects::UnitEffectEventCallback<'_>>,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        let budget = super::super::preparation::poses::storage::budget(cpu)?;
         let _profile_scope = solarity_profiling::profile!(
             "runtime.application.terrain_frame.m2.unit_scene.frame.advance_unit_callbacks"
         );
@@ -153,7 +156,8 @@ impl M2Frame {
                              _: u32,
                              event: &M2ExpiredVariation,
                              random: &mut CrtRand| {
-                self.bone_demand.clear();
+                self.bone_demand
+                    .begin(&budget, source.model.animations().bones().len())?;
                 self.bone_demand
                     .events(&source.model, placement.owner, event.event_window);
                 let samples = self.scene_poses.sample(
@@ -198,8 +202,12 @@ impl M2Frame {
             {
                 let playback = playback.borrow();
                 let clock = playback.sample_clock(now as u32);
-                let sequences = playback.bone_sequence_clocks(&source.model, clock, now as u32);
-                self.bone_demand.clear();
+                let sequences = self.bone_clock_scratch.capture(
+                    &budget,
+                    playback.bone_sequence_clock_iter(&source.model, clock, now as u32),
+                )?;
+                self.bone_demand
+                    .begin(&budget, source.model.animations().bones().len())?;
                 self.unit_effects.request_anchor_bones(
                     animation,
                     &source.model,
@@ -215,7 +223,7 @@ impl M2Frame {
                     M2BonePoseOverrides {
                         model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
                         bone_transforms: body_pose.bone_transforms(),
-                        bone_sequences: &sequences,
+                        bone_sequences: sequences,
                         ..Default::default()
                     },
                     self.bone_demand.bones(),
@@ -235,6 +243,7 @@ impl M2Frame {
         camera: WorldCameraFrame,
         now: f32,
     ) -> Result<bool, RuntimeTerrainFrameError> {
+        let budget = super::super::preparation::poses::storage::budget(cpu)?;
         let owner = self.placements[index].owner;
         let guid = match owner {
             M2GpuPlacementOwner::PlayerBody { guid }
@@ -268,8 +277,12 @@ impl M2Frame {
         };
         let playback = playback.borrow();
         let clock = playback.sample_clock(now as u32);
-        let sequences = playback.bone_sequence_clocks(&source.model, clock, now as u32);
-        self.bone_demand.clear();
+        let sequences = self.bone_clock_scratch.capture(
+            &budget,
+            playback.bone_sequence_clock_iter(&source.model, clock, now as u32),
+        )?;
+        self.bone_demand
+            .begin(&budget, source.model.animations().bones().len())?;
         self.bone_demand.attachment(&source.model, 0);
         let samples = self.scene_poses.sample(
             cpu,
@@ -280,7 +293,7 @@ impl M2Frame {
             camera.view() * placement.transform,
             M2BonePoseOverrides {
                 model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
-                bone_sequences: &sequences,
+                bone_sequences: sequences,
                 ..Default::default()
             },
             self.bone_demand.bones(),

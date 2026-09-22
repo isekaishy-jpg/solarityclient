@@ -465,11 +465,14 @@ impl M2Frame {
                                 .map(|pose| pose.body)
                         });
                     let clock = advance.clock;
-                    let bone_sequences = playback.bone_sequence_clocks(
-                        &source.model,
-                        clock,
-                        animation_time_ms as u32,
-                    );
+                    self.bone_clock_scratch.capture(
+                        &admission.storage,
+                        playback.bone_sequence_clock_iter(
+                            &source.model,
+                            clock,
+                            animation_time_ms as u32,
+                        ),
+                    )?;
                     let finger_pose_hands = placement
                         .retirement
                         .as_ref()
@@ -562,7 +565,6 @@ impl M2Frame {
                         placement_opacity,
                         clock,
                         body_pose,
-                        bone_sequences,
                         finger_pose,
                         event_window,
                         model_view,
@@ -596,7 +598,10 @@ impl M2Frame {
                 if !selected.expired.is_empty() {
                     if !selected.expired_started {
                         for (ordinal, expired) in selected.expired.iter().enumerate() {
-                            self.bone_demand.clear();
+                            self.bone_demand.begin(
+                                &admission.storage,
+                                source.model.animations().bones().len(),
+                            )?;
                             self.bone_demand.events(
                                 &source.model,
                                 placement.owner,
@@ -631,7 +636,8 @@ impl M2Frame {
                             return Ok(false);
                         }
                         let expired = &selected.expired[ordinal];
-                        self.bone_demand.clear();
+                        self.bone_demand
+                            .begin(&admission.storage, source.model.animations().bones().len())?;
                         self.bone_demand.events(
                             &source.model,
                             placement.owner,
@@ -682,7 +688,7 @@ impl M2Frame {
                         .body_pose
                         .as_ref()
                         .map_or(&[], |pose| pose.bone_transforms()),
-                    bone_sequences: &selected.bone_sequences,
+                    bone_sequences: self.bone_clock_scratch.values(),
                 };
                 let mut placement_profile =
                     solarity_profiling::detail_profile!("m2.selected_placement");
@@ -712,8 +718,9 @@ impl M2Frame {
                         &mut self.bone_pose_scratch,
                     )?;
                 if !batch_hit {
-                    self.bone_demand
-                        .model(super::super::demand::CpuModelInputs {
+                    self.bone_demand.model(
+                        &admission.storage,
+                        super::super::demand::CpuModelInputs {
                             placement,
                             model: &source.model,
                             window: event_window,
@@ -722,7 +729,8 @@ impl M2Frame {
                             glue_ids: &self.glue_attachment_ids,
                             effects: &self.unit_effects,
                             publishes_lights,
-                        });
+                        },
+                    )?;
                 }
                 let samples_hit = !batch_hit
                     && self.pose_batch.take_samples(

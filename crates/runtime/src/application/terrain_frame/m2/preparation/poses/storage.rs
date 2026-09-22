@@ -5,7 +5,7 @@ use solarity_cpu::{
 };
 
 /// Production always supplies an executor. Only independent serial fixtures may omit it.
-pub(in crate::application::terrain_frame::m2::preparation) fn budget(
+pub(in crate::application::terrain_frame::m2) fn budget(
     cpu: Option<&CpuExecutor>,
 ) -> Result<CpuStorageBudget, CpuError> {
     if let Some(cpu) = cpu {

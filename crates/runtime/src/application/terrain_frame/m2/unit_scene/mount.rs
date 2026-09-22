@@ -19,6 +19,7 @@ impl M2Frame {
         random: &mut CrtRand,
         mut effect_callback: Option<&mut unit_effects::UnitEffectEventCallback<'_>>,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        let budget = super::super::preparation::poses::storage::budget(cpu)?;
         let body_owner = match self.placements[index].owner {
             M2GpuPlacementOwner::PlayerMount { guid } => M2GpuPlacementOwner::PlayerBody { guid },
             M2GpuPlacementOwner::RemotePlayerMount { guid } => {
@@ -53,7 +54,8 @@ impl M2Frame {
                          _: u32,
                          event: &M2ExpiredVariation,
                          random: &mut CrtRand| {
-            self.bone_demand.clear();
+            self.bone_demand
+                .begin(&budget, source.model.animations().bones().len())?;
             self.bone_demand
                 .events(&source.model, placement.owner, event.event_window);
             self.bone_demand.attachment(&source.model, 0);
@@ -92,8 +94,11 @@ impl M2Frame {
             // A tied completion may already have changed the mount timer, so
             // this body query samples its current pose without another scan.
             let clock = playback.sample_clock(now as u32);
-            let sequences = playback.bone_sequence_clocks(&source.model, clock, now as u32);
-            let samples = if clock != event.clock || sequences != event.bone_sequences {
+            let sequences = self.bone_clock_scratch.capture(
+                &budget,
+                playback.bone_sequence_clock_iter(&source.model, clock, now as u32),
+            )?;
+            let samples = if clock != event.clock || sequences != event.bone_sequences.as_slice() {
                 self.scene_poses.sample(
                     cpu,
                     wait,
@@ -103,7 +108,7 @@ impl M2Frame {
                     camera.view() * transform,
                     M2BonePoseOverrides {
                         model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
-                        bone_sequences: &sequences,
+                        bone_sequences: sequences,
                         ..Default::default()
                     },
                     self.bone_demand.bones(),

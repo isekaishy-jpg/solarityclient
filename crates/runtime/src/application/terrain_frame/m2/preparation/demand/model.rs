@@ -21,7 +21,11 @@ pub(in crate::application::terrain_frame::m2) struct CpuModelInputs<'a> {
 
 impl CpuBoneDemand {
     /// A callback-only unit with no active consumers requests no skeleton work.
-    pub(in crate::application::terrain_frame::m2) fn model(&mut self, input: CpuModelInputs<'_>) {
+    pub(in crate::application::terrain_frame::m2) fn model(
+        &mut self,
+        budget: &solarity_cpu::CpuStorageBudget,
+        input: CpuModelInputs<'_>,
+    ) -> Result<(), solarity_cpu::CpuError> {
         let CpuModelInputs {
             placement,
             model,
@@ -32,7 +36,7 @@ impl CpuBoneDemand {
             effects,
             publishes_lights,
         } = input;
-        self.clear();
+        self.begin(budget, model.animations().bones().len())?;
         self.events(model, placement.owner, window);
         if let Some(retired) = &placement.retirement {
             for &id in retired.attachments() {
@@ -81,5 +85,6 @@ impl CpuBoneDemand {
             | M2GpuPlacementOwner::GameObject { .. }
             | M2GpuPlacementOwner::UnitItemVisual { .. } => {}
         }
+        Ok(())
     }
 }

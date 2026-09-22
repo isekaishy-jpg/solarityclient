@@ -82,8 +82,9 @@ impl M2Frame {
                 let window = animation
                     .and_then(|animation| animation.prepared_scene_event_window())
                     .unwrap_or_else(|| playback.sample_event_window(now as f32));
-                self.bone_demand
-                    .model(super::super::demand::CpuModelInputs {
+                self.bone_demand.model(
+                    &budget,
+                    super::super::demand::CpuModelInputs {
                         placement,
                         model: &source.model,
                         window,
@@ -93,7 +94,8 @@ impl M2Frame {
                         effects: &self.unit_effects,
                         publishes_lights: world_lighting
                             && self.placement_visibility.has_lights(index),
-                    });
+                    },
+                )?;
                 if self.bone_demand.bones().is_empty() {
                     continue;
                 }

@@ -526,6 +526,7 @@ pub(in crate::application) struct M2Frame {
     /// CPU samples cannot be mistaken for a complete render palette.
     bone_samples_scratch: M2BoneSamples,
     bone_demand: preparation::demand::CpuBoneDemand,
+    bone_clock_scratch: preparation::poses::PoseClockScratch,
     pose_batch: preparation::poses::PoseBatch,
     late_pose: preparation::poses::LatePose,
     portrait: portrait::PortraitPreparation,
@@ -665,6 +666,7 @@ impl M2Frame {
             geometry_batch: Default::default(),
             bone_samples_scratch: M2BoneSamples::default(),
             bone_demand: preparation::demand::CpuBoneDemand::default(),
+            bone_clock_scratch: preparation::poses::PoseClockScratch::default(),
             pose_batch: preparation::poses::PoseBatch::default(),
             late_pose: preparation::poses::LatePose::default(),
             portrait: portrait::PortraitPreparation::default(),
@@ -826,6 +828,7 @@ impl M2Frame {
             geometry_batch: Default::default(),
             bone_samples_scratch: M2BoneSamples::default(),
             bone_demand: preparation::demand::CpuBoneDemand::default(),
+            bone_clock_scratch: preparation::poses::PoseClockScratch::default(),
             pose_batch: preparation::poses::PoseBatch::default(),
             late_pose: preparation::poses::LatePose::default(),
             portrait: portrait::PortraitPreparation::default(),

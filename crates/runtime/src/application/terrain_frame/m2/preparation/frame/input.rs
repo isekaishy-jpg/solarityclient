@@ -55,7 +55,6 @@ pub(super) struct SelectedPlacement {
     pub(super) placement_opacity: f32,
     pub(super) clock: solarity_rendering::M2AnimationClock,
     pub(super) body_pose: Option<crate::application::unit_animation::UnitBodyPoseSample>,
-    pub(super) bone_sequences: Vec<(u16, solarity_rendering::M2AnimationClock)>,
     pub(super) finger_pose: Option<(
         solarity_rendering::M2AnimationClock,
         solarity_rendering::M2FingerPoseHands,

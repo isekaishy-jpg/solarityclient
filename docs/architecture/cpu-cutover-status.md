@@ -762,6 +762,34 @@ and named-bone results match serial preparation. Runtime all-target/all-feature
 Clippy with warnings denied, formatting and diff checks pass. Evidence is
 `target/scene-pose-admission-tests.log` and `target/scene-pose-admission-clippy.log`.
 
+Caller-owned named-bone demand and sequence-clock scratch now retain Frame byte
+admission. Scene preflight funds both alongside existing named-sample storage from
+one source-bounded working set before callbacks. Each demand collection admits its
+source bone bound before reset, including later effect generations. A charged
+membership bitmap keeps first-request order while eliminating repeated aliases;
+invalid bone references retain the prior ignored-demand behavior. Event and
+attachment publication still follows its original declarations and callback order.
+
+Mount, rider and anchor callbacks now copy bounded playback iterators into one
+retained clock bank. Selected placement admission uses that same frame-owned bank
+across pose waits, eliminating its per-placement clock Vec. The pending frame owns
+the frame exclusively and does not recapture clocks when resuming. Worker copies
+remain independently owned. Warm callers retain their buffers; capacity refusal
+preserves the preceding demand/clock values. Expired-variation playback snapshots
+and resident playback state still require accounting, as do root-wide and complete
+geometry working-set admission and the remaining source/residency requirements.
+Build 177 remains installed; the complete cutover remains open.
+
+Validation: all 508 runtime library tests pass (30 existing ignores), including the
+moving-scene serial geometry comparison and native unit/mount/vehicle callback
+coverage. New checks prove bounded demand ordering across bitmap words, duplicate
+alias sampling parity, ignored invalid demand, refusal before reset or budget
+transfer, finite clock-iterator bounds and warm pointer reuse. Runtime all-target/
+all-feature Clippy with warnings denied, formatting and diff checks pass. The first
+validation process ended during compilation without a result; the retained-artifact
+rerun completed. Evidence is `target/caller-pose-scratch-tests-final.log` and
+`target/caller-pose-scratch-clippy.log`.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases

@@ -44,6 +44,7 @@ impl M2Frame {
             crate::application::terrain_frame::shadow::SceneryShadowQueries<'_>,
         >,
     ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
+        let demand_budget = super::poses::storage::budget(cpu)?;
         let mut frame_profile = solarity_profiling::profile!("M2 frame preparation");
         let _cycles = solarity_profiling::profile_cycles!("m2.prepare_cpu");
         let mut work = super::diagnostics::Work::new();
@@ -603,7 +604,8 @@ impl M2Frame {
                 .as_ref()
                 .map_or(&[][..], |pose| pose.bone_transforms());
             for expired in advance.expired_variations {
-                self.bone_demand.clear();
+                self.bone_demand
+                    .begin(&demand_budget, source.model.animations().bones().len())?;
                 self.bone_demand
                     .events(&source.model, owner, expired.event_window);
                 self.bone_samples_scratch.recompose(
@@ -739,16 +741,19 @@ impl M2Frame {
 
                 &self.bone_pose_scratch
             } else {
-                self.bone_demand.model(super::demand::CpuModelInputs {
-                    placement,
-                    model: &source.model,
-                    window: event_window,
-                    items: &self.requested_items,
-                    visuals: &self.requested_visuals,
-                    glue_ids: &self.glue_attachment_ids,
-                    effects: &self.unit_effects,
-                    publishes_lights,
-                });
+                self.bone_demand.model(
+                    &demand_budget,
+                    super::demand::CpuModelInputs {
+                        placement,
+                        model: &source.model,
+                        window: event_window,
+                        items: &self.requested_items,
+                        visuals: &self.requested_visuals,
+                        glue_ids: &self.glue_attachment_ids,
+                        effects: &self.unit_effects,
+                        publishes_lights,
+                    },
+                )?;
                 self.bone_samples_scratch.recompose(
                     source.model.animations(),
                     clock,
