@@ -70,14 +70,20 @@ fn shared_model_callbacks_variations_and_mutations_match_original_executable()
 -> Result<(), Box<dyn Error>> {
     let (model, _) = playback_model()?;
     let mut cases = 0;
+    let queue_capacity = solarity_rendering::m2_callback_queue_capacity(
+        model.animations(),
+        model.animations().bones().len(),
+    )?;
     let budget = solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(
-        model.animations().bones().len() * size_of::<(u16, solarity_rendering::M2AnimationClock)>(),
+        model.animations().bones().len() * size_of::<(u16, solarity_rendering::M2AnimationClock)>()
+            + queue_capacity * size_of::<solarity_rendering::M2QueuedCallback>(),
         0,
         0,
     ));
-    let mut scratch = crate::application::model_playback::PoseClockScratch::default();
-    scratch.prepare(&budget, model.animations().bones().len())?;
-    let address = scratch.values().as_ptr();
+    let mut scratch = crate::application::model_playback::M2CallbackScratch::default();
+    scratch.prepare(&budget, model.animations().bones().len(), queue_capacity)?;
+    let address = scratch.clocks.values().as_ptr();
+    let queue_address = scratch.queue.as_ptr();
     for row in include_str!("../fixtures/native_model_bone_playback.txt").lines() {
         if row.is_empty() || row.starts_with('#') {
             continue;
@@ -200,9 +206,16 @@ fn shared_model_callbacks_variations_and_mutations_match_original_executable()
             &mut random,
             Some(&mut complete),
             Some(&mut event),
-            Some((&budget, &mut scratch)),
+            Some(crate::application::model_playback::M2CallbackStorage {
+                budget: &budget,
+                scratch: &mut scratch,
+                queue_capacity,
+            }),
         )?;
-        assert_eq!(scratch.values().as_ptr(), address);
+        assert_eq!(scratch.clocks.values().as_ptr(), address);
+        assert_eq!(scratch.queue.as_ptr(), queue_address);
+        assert!(scratch.queue.is_empty());
+        assert_eq!(playback.callback_queue.capacity(), 0);
         assert!(
             advance.expired_variations.is_empty(),
             "synchronously dispatched events must not replay later"
@@ -293,7 +306,7 @@ fn mutate(
 #[test]
 fn admitted_event_snapshot_preserves_refused_timers_and_matches_owned_dispatch()
 -> Result<(), Box<dyn Error>> {
-    use crate::application::model_playback::PoseClockScratch;
+    use crate::application::model_playback::M2CallbackScratch;
     use solarity_cpu::{CpuStorageBudget, CpuStorageClass as Class, CpuStoragePlan};
     use solarity_rendering::M2AnimationClock;
     let (model, catalog) = playback_model()?;
@@ -312,10 +325,15 @@ fn admitted_event_snapshot_preserves_refused_timers_and_matches_owned_dispatch()
         M2SequenceStartPhase::DuringSceneUpdate,
         &mut random,
     )?;
-    let bytes = size_of::<(u16, M2AnimationClock)>();
+    let queue_capacity = solarity_rendering::m2_callback_queue_capacity(
+        model.animations(),
+        model.animations().bones().len(),
+    )?;
+    let bytes = size_of::<(u16, M2AnimationClock)>()
+        + queue_capacity * size_of::<solarity_rendering::M2QueuedCallback>();
     let refused = CpuStorageBudget::new(CpuStoragePlan::new(bytes - 1, 0, 0));
     let budget = CpuStorageBudget::new(CpuStoragePlan::new(bytes, 0, 0));
-    let mut scratch = PoseClockScratch::default();
+    let mut scratch = M2CallbackScratch::default();
     let original_clock = playback.sample_clock(0);
     let original_cursor = playback.previous_event_scene_time_ms;
     let original_random = random;
@@ -331,7 +349,11 @@ fn admitted_event_snapshot_preserves_refused_timers_and_matches_owned_dispatch()
             &mut random,
             Some(&mut complete),
             None,
-            Some((&refused, &mut scratch))
+            Some(crate::application::model_playback::M2CallbackStorage {
+                budget: &refused,
+                scratch: &mut scratch,
+                queue_capacity,
+            })
         ),
         Err(RuntimeTerrainFrameError::Cpu(
             solarity_cpu::CpuError::StorageAtCapacity { .. }
@@ -342,11 +364,13 @@ fn admitted_event_snapshot_preserves_refused_timers_and_matches_owned_dispatch()
     assert_eq!(playback.sample_clock(0), original_clock);
     assert_eq!(playback.previous_event_scene_time_ms, original_cursor);
     assert_eq!(random, original_random);
-    assert!(scratch.values().is_empty());
+    assert!(scratch.clocks.values().is_empty());
+    assert_eq!(scratch.queue.capacity(), 0);
     assert_eq!(refused.snapshot().used(Class::Frame), 0);
 
-    scratch.prepare(&budget, 1)?;
-    let address = scratch.values().as_ptr();
+    scratch.prepare(&budget, 1, queue_capacity)?;
+    let address = scratch.clocks.values().as_ptr();
+    let queue_address = scratch.queue.as_ptr();
     let mut reference = playback.clone();
     let mut reference_random = random;
     let expected = reference.clock_with_bone_callbacks(
@@ -375,7 +399,11 @@ fn admitted_event_snapshot_preserves_refused_timers_and_matches_owned_dispatch()
         &mut random,
         None,
         Some(&mut event),
-        Some((&budget, &mut scratch)),
+        Some(crate::application::model_playback::M2CallbackStorage {
+            budget: &budget,
+            scratch: &mut scratch,
+            queue_capacity,
+        }),
     )?;
     assert!(advance.expired_variations.is_empty());
     assert_eq!(advance.clock, expected.clock);
@@ -386,10 +414,13 @@ fn admitted_event_snapshot_preserves_refused_timers_and_matches_owned_dispatch()
         assert_eq!(actual.1, expected.event_window);
         assert_eq!(actual.2, expected.bone_sequences);
     }
-    assert_eq!(scratch.values().as_ptr(), address);
+    assert_eq!(scratch.clocks.values().as_ptr(), address);
+    assert_eq!(scratch.queue.as_ptr(), queue_address);
+    assert!(scratch.queue.is_empty());
+    assert_eq!(playback.callback_queue.capacity(), 0);
     assert_eq!(budget.snapshot().used(Class::Frame), bytes);
     // Independently retained events survive reuse of the immediate callback bank.
-    scratch.capture(
+    scratch.clocks.capture(
         &budget,
         [(4, M2AnimationClock::new(0, 10., 10.))].into_iter(),
     )?;

@@ -42,10 +42,62 @@ pub fn scan_m2_callbacks(
     events_enabled: bool,
     queue: &mut Vec<M2QueuedCallback>,
 ) -> u32 {
+    scan_m2_callbacks_into(
+        animations,
+        slots,
+        previous_ms,
+        current_ms,
+        events_enabled,
+        queue,
+    )
+    .unwrap_or_else(|error| panic!("callback queue allocation failed: {error}"))
+}
+
+/// Authored upper bound for one scan, including duplicate/collapsed event ticks.
+/// Every timestamp can contribute once at the selected tick, plus one completion
+/// per slot. Taking each event's largest channel also covers sequence changes.
+/// # Errors
+/// Reports size overflow before allocating any queue storage.
+pub fn m2_callback_queue_capacity(
+    animations: &M2AnimationSet,
+    slots: usize,
+) -> Result<usize, solarity_cpu::CpuError> {
+    let per_slot = animations
+        .events()
+        .iter()
+        .try_fold(1_usize, |count, event| {
+            count
+                .checked_add(
+                    event
+                        .timeline()
+                        .channels()
+                        .iter()
+                        .map(Vec::len)
+                        .max()
+                        .unwrap_or(0),
+                )
+                .ok_or(solarity_cpu::CpuError::StorageSizeOverflow)
+        })?;
+    slots
+        .checked_mul(per_slot)
+        .ok_or(solarity_cpu::CpuError::StorageSizeOverflow)
+}
+
+/// Preserves native scan order while appending through an admitted writer.
+/// # Errors
+/// Returns capacity/allocation failure without dispatching a partial callback queue.
+pub fn scan_m2_callbacks_into(
+    animations: &M2AnimationSet,
+    slots: impl IntoIterator<Item = M2CallbackSlot>,
+    previous_ms: u32,
+    current_ms: u32,
+    events_enabled: bool,
+    queue: &mut impl solarity_cpu::OutputBuffer<M2QueuedCallback>,
+) -> Result<u32, solarity_cpu::CpuError> {
     queue.clear();
     let mut nearest = current_ms;
     if current_ms.wrapping_sub(previous_ms) as i32 <= 0 {
-        return nearest;
+        return Ok(nearest);
     }
     for slot in slots {
         if slot.finished || usize::from(slot.bone) >= animations.bones().len() {
@@ -70,20 +122,30 @@ pub fn scan_m2_callbacks(
                 let Some(timestamps) = event.timeline().channels().get(channel) else {
                     continue;
                 };
+                let mut error = None;
                 slot.timer
                     .visit_event_ticks(timestamps, previous_ms, nearest, |tick| {
-                        if nearest.wrapping_sub(tick) as i32 >= 0 {
+                        if error.is_none() && nearest.wrapping_sub(tick) as i32 >= 0 {
                             if tick != nearest {
                                 queue.clear();
                                 nearest = tick;
                             }
-                            queue.push(M2QueuedCallback {
-                                slot,
-                                event: Some(index),
-                                scene_time_ms: tick,
-                            });
+                            error = queue
+                                .try_reserve_exact(1)
+                                .and_then(|()| {
+                                    queue.push(M2QueuedCallback {
+                                        slot,
+                                        event: Some(index),
+                                        scene_time_ms: tick,
+                                    })
+                                })
+                                .err();
                         }
                     });
+                if let Some(error) = error {
+                    queue.clear();
+                    return Err(error);
+                }
             }
         }
         if let Some(tick) = completion {
@@ -100,14 +162,19 @@ pub fn scan_m2_callbacks(
                 queue.clear();
                 nearest = tick;
             }
-            queue.push(M2QueuedCallback {
-                slot,
-                event: None,
-                scene_time_ms: tick,
-            });
+            if let Err(error) = queue.try_reserve_exact(1).and_then(|()| {
+                queue.push(M2QueuedCallback {
+                    slot,
+                    event: None,
+                    scene_time_ms: tick,
+                })
+            }) {
+                queue.clear();
+                return Err(error);
+            }
         }
     }
-    nearest
+    Ok(nearest)
 }
 
 /// 830FB0 starts ancestry traversal at the event bone's parent. A parentless

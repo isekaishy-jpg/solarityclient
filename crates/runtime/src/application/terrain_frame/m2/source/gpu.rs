@@ -447,6 +447,10 @@ pub(in super::super) fn prepare_gpu_source_with_plan(
     profile.mark("effects");
     Ok(Arc::new(super::super::M2GpuSourceData {
         _resource_leases: resource_leases,
+        callback_queue_capacity: solarity_rendering::m2_callback_queue_capacity(
+            model.animations(),
+            model.animations().bones().len(),
+        )?,
         model: ResourceLease::clone(model),
         plan,
         model_oriented_billboard_bones,

@@ -847,6 +847,32 @@ independent retained-event lifetime and final charge release. All-target/all-fea
 runtime Clippy with warnings denied, formatting and diff checks pass. Evidence is
 `target/event-clock-snapshot-tests.log` and `target/event-clock-snapshot-clippy.log`.
 
+The immediate-callback queue now shares the frame-owned clock bank's connected
+admission. Source preparation computes a checked authored bound once: each active
+slot can retain every timestamp from each event's largest channel plus one
+completion. This includes duplicate timestamps and distinct keys collapsed to a
+single scene tick by native speed conversion. Frame preflight reserves the largest
+source requirement alongside other callback scratch before any scene mutation.
+Unit and mount scans use the same native scan algorithm through fixed-capacity
+writers, without growing or populating their playback-local queue. Capacity errors
+clear partial queue output and propagate before dispatch; callback errors return
+the charged bank with its capacity intact. The standalone allocating scan remains
+available for consumers outside this frame-owned boundary. Deferred playback event
+lists and persistent bone-slot storage still need accounting; complete geometry
+admission and the broader residency requirements remain open. Build 177 remains
+installed, with no new package or performance comparison.
+
+Validation: all 510 runtime library tests pass (30 existing ignores), as do all
+six targeted rendering sequence-timer tests. The 576 native scan fixture cases
+now use a fixed writer with stable storage. The 288 runtime native callback cases
+fund both clock/queue arrays with zero remaining headroom and verify that scans
+leave the playback-local queue unallocated. Pressure coverage includes collective
+one-byte-short refusal before timer/RNG mutation, duplicate authored events,
+clearing partial output after writer refusal, overflow, retained pointer reuse
+and charge release. Rendering/runtime all-target/all-feature Clippy with warnings
+denied, formatting and diff checks pass. Logs are `target/callback-queue-rendering-tests.log`,
+`target/callback-queue-runtime-tests.log` and `target/callback-queue-clippy.log`.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases

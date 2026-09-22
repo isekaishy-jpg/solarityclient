@@ -3,10 +3,13 @@
 use solarity_asset::{DecodedM2Model, M2ModelAnimationMode};
 use solarity_rendering::{
     M2AnimationClock, M2CallbackSlot, M2EventTimeWindow, M2ModelSequenceBlend, M2QueuedCallback,
-    M2SequenceStartPhase, scan_m2_callbacks,
+    M2SequenceStartPhase, scan_m2_callbacks_into,
 };
 
-use super::{M2BoneEvent, M2ExpiredVariation, M2Playback, M2PlaybackAdvance, PoseClockScratch};
+use super::{
+    M2BoneEvent, M2CallbackScratch, M2CallbackStorage, M2ExpiredVariation, M2Playback,
+    M2PlaybackAdvance, PoseClockScratch,
+};
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::random::CrtRand;
 
@@ -378,18 +381,57 @@ impl M2Playback {
         model: &DecodedM2Model,
         now: u32,
         random: &mut CrtRand,
+        callback: Option<&mut M2BoneCompletionCallback<'_>>,
+        event_callback: Option<&mut M2BoneEventCallback<'_>>,
+        storage: Option<M2CallbackStorage<'_>>,
+    ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
+        if let Some(storage) = storage {
+            storage.scratch.prepare(
+                storage.budget,
+                self.bone_playback.len(),
+                storage.queue_capacity,
+            )?;
+            let M2CallbackScratch { clocks, queue } = storage.scratch;
+            self.advance_bone_callbacks(
+                model,
+                now,
+                random,
+                callback,
+                event_callback,
+                Some((storage.budget, clocks)),
+                &mut queue.writer(),
+            )
+        } else {
+            let mut queue = std::mem::take(&mut self.callback_queue);
+            let result = self.advance_bone_callbacks(
+                model,
+                now,
+                random,
+                callback,
+                event_callback,
+                None,
+                &mut queue,
+            );
+            self.callback_queue = queue;
+            result
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn advance_bone_callbacks(
+        &mut self,
+        model: &DecodedM2Model,
+        now: u32,
+        random: &mut CrtRand,
         mut callback: Option<&mut M2BoneCompletionCallback<'_>>,
         mut event_callback: Option<&mut M2BoneEventCallback<'_>>,
         mut event_storage: Option<(&solarity_cpu::CpuStorageBudget, &mut PoseClockScratch)>,
+        queue: &mut impl solarity_cpu::OutputBuffer<M2QueuedCallback>,
     ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
-        if let Some((budget, scratch)) = &mut event_storage {
-            scratch.prepare(budget, self.bone_playback.len())?;
-        }
         self.prepare_bone_scene(now);
         for slot in &mut self.bone_playback {
             slot.playback.prepare_bone_scene(now);
         }
-        let mut queue = std::mem::take(&mut self.callback_queue);
         let result = (|| {
             let mut expired_variations = Vec::new();
             let mut previous = self.previous_event_scene_time_ms;
@@ -407,13 +449,13 @@ impl M2Playback {
                             .filter_map(|slot| slot.playback.callback_slot(slot.bone)),
                     );
                 let nearest =
-                    scan_m2_callbacks(model.animations(), slots, previous, now, true, &mut queue);
+                    scan_m2_callbacks_into(model.animations(), slots, previous, now, true, queue)?;
                 if queue.is_empty() {
                     break;
                 }
                 // 830FB0 samples every queued event's position during the scan,
                 // before any tied completion callback can replace either pose.
-                let event_pose = if queue.iter().any(|queued| queued.event.is_some()) {
+                let event_pose = if queue.as_ref().iter().any(|queued| queued.event.is_some()) {
                     let clock = self.sample_clock(now);
                     let bones =
                         if let Some((budget, scratch)) = &mut event_storage {
@@ -428,7 +470,7 @@ impl M2Playback {
                 } else {
                     None
                 };
-                for queued in queue.iter().copied() {
+                for queued in queue.as_ref().iter().copied() {
                     if let Some(index) = queued.event {
                         let Some((clock, bones)) = event_pose.as_ref() else {
                             continue;
@@ -500,7 +542,6 @@ impl M2Playback {
             })
         })();
         queue.clear();
-        self.callback_queue = queue;
         result
     }
 }

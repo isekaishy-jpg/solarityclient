@@ -171,7 +171,11 @@ impl M2Frame {
                 random,
                 Some(&mut completed),
                 Some(&mut event),
-                Some((&budget, &mut self.event_clock_scratch)),
+                Some(crate::application::model_playback::M2CallbackStorage {
+                    budget: &budget,
+                    scratch: &mut self.callback_scratch,
+                    queue_capacity: source.callback_queue_capacity,
+                }),
             )?);
         Ok(())
     }

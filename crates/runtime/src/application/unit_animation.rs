@@ -1215,10 +1215,7 @@ impl UnitAnimationBehavior {
         scene_time_ms: f32,
         random: &mut CrtRand,
         event_callback: Option<&mut M2BoneEventCallback<'_>>,
-        event_storage: Option<(
-            &solarity_cpu::CpuStorageBudget,
-            &mut super::model_playback::PoseClockScratch,
-        )>,
+        event_storage: Option<super::model_playback::M2CallbackStorage<'_>>,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let mut playback = self.playback.borrow_mut();
         let mut completed = |playback: &mut M2Playback,

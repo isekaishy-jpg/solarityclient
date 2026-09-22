@@ -5,9 +5,11 @@
 mod tests;
 
 mod bones;
+mod callback_storage;
 mod clocks;
 pub(in crate::application) use bones::M2BoneEventCallback;
 use bones::M2BonePlayback;
+pub(in crate::application) use callback_storage::{M2CallbackScratch, M2CallbackStorage};
 pub(in crate::application) use clocks::PoseClockScratch;
 
 use crate::application::terrain_frame::RuntimeTerrainFrameError;

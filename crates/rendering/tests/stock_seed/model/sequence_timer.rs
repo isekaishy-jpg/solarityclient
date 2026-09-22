@@ -20,9 +20,12 @@ use super::{
 
 #[test]
 fn active_bone_callback_queue_matches_original_model_update() -> Result<(), Box<dyn Error>> {
-    use solarity_rendering::{M2CallbackSlot, scan_m2_callbacks};
+    use solarity_rendering::{M2CallbackSlot, m2_callback_queue_capacity, scan_m2_callbacks_into};
     let model = callback_model()?;
     let animations = model.animations();
+    let capacity = m2_callback_queue_capacity(animations, 2)?;
+    let mut queue = Vec::with_capacity(capacity);
+    let address = queue.as_ptr();
     let mut cases = 0;
     for row in include_str!("../../fixtures/native_model_bone_callbacks.txt").lines() {
         if row.is_empty() || row.starts_with('#') {
@@ -95,18 +98,18 @@ fn active_bone_callback_queue_matches_original_model_update() -> Result<(), Box<
             })
             .collect::<Result<Vec<_>, _>>()?;
         let mut actual = Vec::new();
-        let mut queue = Vec::new();
         let mut cursor = *previous;
         for iteration in 0..10_000 {
             assert!(iteration < 9_999, "scan did not terminate: {row}");
-            let next = scan_m2_callbacks(
+            let next = scan_m2_callbacks_into(
                 animations,
                 slots,
                 cursor,
                 *current,
                 *events != 0,
-                &mut queue,
-            );
+                &mut solarity_cpu::FixedWriter::new(&mut queue),
+            )?;
+            assert_eq!(queue.as_ptr(), address);
             if queue.is_empty() {
                 break;
             }
@@ -150,6 +153,10 @@ fn active_bone_callback_queue_matches_original_model_update() -> Result<(), Box<
 }
 
 fn callback_model() -> Result<DecodedM2Model, Box<dyn Error>> {
+    callback_model_with_repeats(1)
+}
+
+fn callback_model_with_repeats(repeats: u32) -> Result<DecodedM2Model, Box<dyn Error>> {
     let mut bytes = render_m2_bytes("Callbacks", 1)?;
     let name = bytes.len() as u32;
     bytes.extend_from_slice(b"Callbacks\0");
@@ -224,12 +231,14 @@ fn callback_model() -> Result<DecodedM2Model, Box<dyn Error>> {
             .copy_from_slice(&(if i == 3 { 0_u16 } else { u16::MAX }).to_le_bytes());
         let timestamps = bytes.len() as u32;
         for key in keys {
-            bytes.extend_from_slice(&key.to_le_bytes());
+            for _ in 0..repeats {
+                bytes.extend_from_slice(&key.to_le_bytes());
+            }
         }
         let channels = bytes.len() as u32;
         for j in 0..4 {
-            bytes.extend_from_slice(&1_u32.to_le_bytes());
-            bytes.extend_from_slice(&(timestamps + j * 4).to_le_bytes());
+            bytes.extend_from_slice(&repeats.to_le_bytes());
+            bytes.extend_from_slice(&(timestamps + j * repeats * 4).to_le_bytes());
         }
         bytes[event + 28..event + 32].copy_from_slice(&4_u32.to_le_bytes());
         bytes[event + 32..event + 36].copy_from_slice(&channels.to_le_bytes());
@@ -521,5 +530,77 @@ fn sequence_seek_events_use_scene_interval_and_preserve_occurrence_order()
         ),
         [0, 1, 0, 0]
     );
+    Ok(())
+}
+
+#[test]
+fn callback_writer_preserves_duplicate_events_and_clears_refused_queue()
+-> Result<(), Box<dyn Error>> {
+    use solarity_rendering::{
+        M2CallbackSlot, m2_callback_queue_capacity, scan_m2_callbacks, scan_m2_callbacks_into,
+    };
+    let model = callback_model_with_repeats(3)?;
+    let animations = model.animations();
+    let slot = M2CallbackSlot {
+        bone: 0,
+        sequence: 0,
+        finished: false,
+        timer: M2ModelSequenceTimer::with_speed(
+            &animations.sequences()[0],
+            M2ModelAnimationMode::Forward,
+            1.,
+            0,
+            0,
+            0,
+            M2SequenceStartPhase::DuringSceneUpdate,
+        ),
+    };
+    let capacity = m2_callback_queue_capacity(animations, 1)?;
+    assert_eq!(capacity, 13);
+    assert!(matches!(
+        m2_callback_queue_capacity(animations, usize::MAX),
+        Err(solarity_cpu::CpuError::StorageSizeOverflow)
+    ));
+    let mut reference = Vec::new();
+    let expected = scan_m2_callbacks(animations, [slot], 0, 100, true, &mut reference);
+    assert_eq!(reference.len(), 3);
+    let mut refused = Vec::with_capacity(reference.len() - 1);
+    let address = refused.as_ptr();
+    assert!(matches!(
+        scan_m2_callbacks_into(
+            animations,
+            [slot],
+            0,
+            100,
+            true,
+            &mut solarity_cpu::FixedWriter::new(&mut refused)
+        ),
+        Err(solarity_cpu::CpuError::OutputCapacity { .. })
+    ));
+    assert!(refused.is_empty());
+    assert_eq!(refused.as_ptr(), address);
+    let mut queue = Vec::with_capacity(capacity);
+    let address = queue.as_ptr();
+    for _ in 0..100 {
+        assert_eq!(
+            scan_m2_callbacks_into(
+                animations,
+                [slot],
+                0,
+                100,
+                true,
+                &mut solarity_cpu::FixedWriter::new(&mut queue)
+            )?,
+            expected
+        );
+        assert_eq!(queue.len(), reference.len());
+        for (actual, expected) in queue.iter().zip(&reference) {
+            assert_eq!(actual.event, expected.event);
+            assert_eq!(actual.scene_time_ms, expected.scene_time_ms);
+            assert_eq!(actual.slot.bone, expected.slot.bone);
+            assert_eq!(actual.slot.sequence, expected.slot.sequence);
+        }
+        assert_eq!(queue.as_ptr(), address);
+    }
     Ok(())
 }

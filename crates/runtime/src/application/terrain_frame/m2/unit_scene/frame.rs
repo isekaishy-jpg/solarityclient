@@ -200,7 +200,11 @@ impl M2Frame {
                 now,
                 random,
                 Some(&mut event),
-                Some((&budget, &mut self.event_clock_scratch)),
+                Some(crate::application::model_playback::M2CallbackStorage {
+                    budget: &budget,
+                    scratch: &mut self.callback_scratch,
+                    queue_capacity: source.callback_queue_capacity,
+                }),
             )?;
             if self.unit_effects.has_anchors(animation)
                 && let Some(playback) = &placement.playback

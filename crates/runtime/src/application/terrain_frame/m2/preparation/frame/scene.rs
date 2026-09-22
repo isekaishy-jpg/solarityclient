@@ -99,13 +99,16 @@ impl M2Frame {
             .prepare_storage(cpu.storage(), receivers)?;
         // Scene callbacks run before draw admission and may sample offscreen roots.
         // Admit their shared named-bone scratch against all current source bounds.
-        let bones = self
-            .sources
-            .iter()
-            .flatten()
-            .map(|source| source.model.animations().bones().len())
-            .max()
-            .unwrap_or(0);
+        let (bones, callbacks) =
+            self.sources
+                .iter()
+                .flatten()
+                .fold((0, 0), |(bones, callbacks), source| {
+                    (
+                        bones.max(source.model.animations().bones().len()),
+                        callbacks.max(source.callback_queue_capacity),
+                    )
+                });
         let mut scratch = solarity_cpu::CpuStorageWorkingSet::default();
         self.bone_samples_scratch
             .include_cpu_storage(cpu.storage(), bones, &mut scratch)?;
@@ -113,8 +116,8 @@ impl M2Frame {
             .include_storage(cpu.storage(), bones, &mut scratch)?;
         self.bone_clock_scratch
             .include_storage(cpu.storage(), bones, &mut scratch)?;
-        self.event_clock_scratch
-            .include_storage(cpu.storage(), bones, &mut scratch)?;
+        self.callback_scratch
+            .include_storage(cpu.storage(), bones, callbacks, &mut scratch)?;
         let mut fund = cpu
             .storage()
             .reserve_working_set(solarity_cpu::CpuStorageClass::Frame, scratch.bytes())?;
@@ -122,8 +125,8 @@ impl M2Frame {
             .reserve_cpu_storage_reserved(&mut fund, bones)?;
         self.bone_demand.reserve_reserved(&mut fund, bones)?;
         self.bone_clock_scratch.reserve_reserved(&mut fund, bones)?;
-        self.event_clock_scratch
-            .reserve_reserved(&mut fund, bones)?;
+        self.callback_scratch
+            .reserve_reserved(&mut fund, bones, callbacks)?;
         drop(fund);
         frame_profile.mark("residency and topology");
         self.vehicle_passengers.prepare_timing(

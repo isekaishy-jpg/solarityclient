@@ -14,7 +14,10 @@ mod sequence_timer;
 mod status;
 mod ui_camera;
 
-pub use callback::{M2CallbackSlot, M2QueuedCallback, scan_m2_callbacks};
+pub use callback::{
+    M2CallbackSlot, M2QueuedCallback, m2_callback_queue_capacity, scan_m2_callbacks,
+    scan_m2_callbacks_into,
+};
 pub use camera::{M2CameraEffectScale, M2CameraFrameError, sample_m2_camera_frame};
 pub use clock::M2AnimationClock;
 pub use event::{M2EventTimeWindow, triggered_m2_event_indices};
