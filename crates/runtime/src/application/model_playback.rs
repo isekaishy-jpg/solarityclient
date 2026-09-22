@@ -5,8 +5,10 @@
 mod tests;
 
 mod bones;
+mod clocks;
 pub(in crate::application) use bones::M2BoneEventCallback;
 use bones::M2BonePlayback;
+pub(in crate::application) use clocks::PoseClockScratch;
 
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::random::CrtRand;
@@ -56,6 +58,14 @@ pub(in crate::application) type M2CompletionCallback<'a> =
 pub(in crate::application) struct M2PlaybackAdvance {
     pub(in crate::application) clock: M2AnimationClock,
     pub(in crate::application) expired_variations: Vec<M2ExpiredVariation>,
+}
+
+/// One immediate callback borrows the scan's pose, frozen before tied completions.
+#[derive(Clone, Copy)]
+pub(in crate::application) struct M2BoneEvent<'a> {
+    pub(in crate::application) clock: M2AnimationClock,
+    pub(in crate::application) event_window: M2EventTimeWindow,
+    pub(in crate::application) bone_sequences: &'a [(u16, M2AnimationClock)],
 }
 
 /// Final event interval and pose clock from one replaced sequence variation.

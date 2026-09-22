@@ -4,7 +4,7 @@ use super::super::{
     CrtRand, M2BonePoseOverrides, M2BoneTransforms, M2Frame, M2GpuPlacementOwner, M2Playback, Mat4,
     Rc, RuntimeTerrainFrameError, WorldCameraFrame, append_triggered_events, unit_effects,
 };
-use crate::application::model_playback::M2ExpiredVariation;
+use crate::application::model_playback::M2BoneEvent;
 use glam::Vec3;
 
 impl M2Frame {
@@ -52,7 +52,7 @@ impl M2Frame {
         let mut event = |playback: &mut M2Playback,
                          _: usize,
                          _: u32,
-                         event: &M2ExpiredVariation,
+                         event: &M2BoneEvent<'_>,
                          random: &mut CrtRand| {
             self.bone_demand
                 .begin(&budget, source.model.animations().bones().len())?;
@@ -68,7 +68,7 @@ impl M2Frame {
                 camera.view() * transform,
                 M2BonePoseOverrides {
                     model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
-                    bone_sequences: &event.bone_sequences,
+                    bone_sequences: event.bone_sequences,
                     ..Default::default()
                 },
                 self.bone_demand.bones(),
@@ -98,7 +98,7 @@ impl M2Frame {
                 &budget,
                 playback.bone_sequence_clock_iter(&source.model, clock, now as u32),
             )?;
-            let samples = if clock != event.clock || sequences != event.bone_sequences.as_slice() {
+            let samples = if clock != event.clock || sequences != event.bone_sequences {
                 self.scene_poses.sample(
                     cpu,
                     wait,
@@ -171,6 +171,7 @@ impl M2Frame {
                 random,
                 Some(&mut completed),
                 Some(&mut event),
+                Some((&budget, &mut self.event_clock_scratch)),
             )?);
         Ok(())
     }

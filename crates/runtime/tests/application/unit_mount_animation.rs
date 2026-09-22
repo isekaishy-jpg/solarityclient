@@ -34,7 +34,7 @@ fn advance_mount(
         |playback: &mut M2Playback, key: i32, animation: u16, _: u32, random: &mut CrtRand| {
             owner.complete_mount_animation(model, playback, key, animation, random)
         };
-    playback.clock_with_bone_callbacks(model, now, random, Some(&mut completed), None)?;
+    playback.clock_with_bone_callbacks(model, now, random, Some(&mut completed), None, None)?;
     Ok(())
 }
 

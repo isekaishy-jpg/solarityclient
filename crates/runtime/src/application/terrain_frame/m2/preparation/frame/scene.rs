@@ -113,6 +113,8 @@ impl M2Frame {
             .include_storage(cpu.storage(), bones, &mut scratch)?;
         self.bone_clock_scratch
             .include_storage(cpu.storage(), bones, &mut scratch)?;
+        self.event_clock_scratch
+            .include_storage(cpu.storage(), bones, &mut scratch)?;
         let mut fund = cpu
             .storage()
             .reserve_working_set(solarity_cpu::CpuStorageClass::Frame, scratch.bytes())?;
@@ -120,6 +122,8 @@ impl M2Frame {
             .reserve_cpu_storage_reserved(&mut fund, bones)?;
         self.bone_demand.reserve_reserved(&mut fund, bones)?;
         self.bone_clock_scratch.reserve_reserved(&mut fund, bones)?;
+        self.event_clock_scratch
+            .reserve_reserved(&mut fund, bones)?;
         drop(fund);
         frame_profile.mark("residency and topology");
         self.vehicle_passengers.prepare_timing(

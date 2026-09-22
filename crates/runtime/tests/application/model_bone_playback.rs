@@ -1,7 +1,7 @@
 //! Full native model scan, variation RNG, and cross-slot callback mutation.
 
 use super::{CrtRand, M2Playback, playback_model};
-use crate::application::model_playback::M2ExpiredVariation;
+use crate::application::model_playback::M2BoneEvent;
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 
 #[test]
@@ -70,6 +70,14 @@ fn shared_model_callbacks_variations_and_mutations_match_original_executable()
 -> Result<(), Box<dyn Error>> {
     let (model, _) = playback_model()?;
     let mut cases = 0;
+    let budget = solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(
+        model.animations().bones().len() * size_of::<(u16, solarity_rendering::M2AnimationClock)>(),
+        0,
+        0,
+    ));
+    let mut scratch = crate::application::model_playback::PoseClockScratch::default();
+    scratch.prepare(&budget, model.animations().bones().len())?;
+    let address = scratch.values().as_ptr();
     for row in include_str!("../fixtures/native_model_bone_playback.txt").lines() {
         if row.is_empty() || row.starts_with('#') {
             continue;
@@ -172,7 +180,7 @@ fn shared_model_callbacks_variations_and_mutations_match_original_executable()
         let mut event = |playback: &mut M2Playback,
                          index: usize,
                          boundary: u32,
-                         _: &M2ExpiredVariation,
+                         _: &M2BoneEvent<'_>,
                          random: &mut CrtRand| {
             calls
                 .borrow_mut()
@@ -192,7 +200,9 @@ fn shared_model_callbacks_variations_and_mutations_match_original_executable()
             &mut random,
             Some(&mut complete),
             Some(&mut event),
+            Some((&budget, &mut scratch)),
         )?;
+        assert_eq!(scratch.values().as_ptr(), address);
         assert!(
             advance.expired_variations.is_empty(),
             "synchronously dispatched events must not replay later"
@@ -277,5 +287,116 @@ fn mutate(
             random,
         )?;
     }
+    Ok(())
+}
+
+#[test]
+fn admitted_event_snapshot_preserves_refused_timers_and_matches_owned_dispatch()
+-> Result<(), Box<dyn Error>> {
+    use crate::application::model_playback::PoseClockScratch;
+    use solarity_cpu::{CpuStorageBudget, CpuStorageClass as Class, CpuStoragePlan};
+    use solarity_rendering::M2AnimationClock;
+    let (model, catalog) = playback_model()?;
+    let mut random = CrtRand::new();
+    let mut playback = M2Playback::unstarted(0, 0);
+    playback.apply_model_sequence(&model, &catalog, 0, 0, 0, &mut random)?;
+    playback.apply_bone_sequence(
+        &model,
+        4,
+        7,
+        None,
+        M2ModelAnimationMode::Forward,
+        1.,
+        0,
+        0,
+        M2SequenceStartPhase::DuringSceneUpdate,
+        &mut random,
+    )?;
+    let bytes = size_of::<(u16, M2AnimationClock)>();
+    let refused = CpuStorageBudget::new(CpuStoragePlan::new(bytes - 1, 0, 0));
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(bytes, 0, 0));
+    let mut scratch = PoseClockScratch::default();
+    let original_clock = playback.sample_clock(0);
+    let original_cursor = playback.previous_event_scene_time_ms;
+    let original_random = random;
+    let mut called = false;
+    let mut complete = |_: &mut M2Playback, _: i32, _: u16, _: u32, _: &mut CrtRand| {
+        called = true;
+        Ok(())
+    };
+    assert!(matches!(
+        playback.clock_with_bone_callbacks(
+            &model,
+            2_000,
+            &mut random,
+            Some(&mut complete),
+            None,
+            Some((&refused, &mut scratch))
+        ),
+        Err(RuntimeTerrainFrameError::Cpu(
+            solarity_cpu::CpuError::StorageAtCapacity { .. }
+        ))
+    ));
+    assert!(!called);
+    assert_eq!(playback.scene_time_ms, 0);
+    assert_eq!(playback.sample_clock(0), original_clock);
+    assert_eq!(playback.previous_event_scene_time_ms, original_cursor);
+    assert_eq!(random, original_random);
+    assert!(scratch.values().is_empty());
+    assert_eq!(refused.snapshot().used(Class::Frame), 0);
+
+    scratch.prepare(&budget, 1)?;
+    let address = scratch.values().as_ptr();
+    let mut reference = playback.clone();
+    let mut reference_random = random;
+    let expected = reference.clock_with_bone_callbacks(
+        &model,
+        2_000,
+        &mut reference_random,
+        None,
+        None,
+        None,
+    )?;
+    assert!(!expected.expired_variations.is_empty());
+    let mut received = Vec::new();
+    let mut event =
+        |_: &mut M2Playback, _: usize, _: u32, event: &M2BoneEvent<'_>, _: &mut CrtRand| {
+            assert_eq!(event.bone_sequences.as_ptr(), address);
+            received.push((
+                event.clock,
+                event.event_window,
+                event.bone_sequences.to_vec(),
+            ));
+            Ok(())
+        };
+    let advance = playback.clock_with_bone_callbacks(
+        &model,
+        2_000,
+        &mut random,
+        None,
+        Some(&mut event),
+        Some((&budget, &mut scratch)),
+    )?;
+    assert!(advance.expired_variations.is_empty());
+    assert_eq!(advance.clock, expected.clock);
+    assert_eq!(random, reference_random);
+    assert_eq!(received.len(), expected.expired_variations.len());
+    for (actual, expected) in received.iter().zip(&expected.expired_variations) {
+        assert_eq!(actual.0, expected.clock);
+        assert_eq!(actual.1, expected.event_window);
+        assert_eq!(actual.2, expected.bone_sequences);
+    }
+    assert_eq!(scratch.values().as_ptr(), address);
+    assert_eq!(budget.snapshot().used(Class::Frame), bytes);
+    // Independently retained events survive reuse of the immediate callback bank.
+    scratch.capture(
+        &budget,
+        [(4, M2AnimationClock::new(0, 10., 10.))].into_iter(),
+    )?;
+    for (actual, expected) in received.iter().zip(&expected.expired_variations) {
+        assert_eq!(actual.2, expected.bone_sequences);
+    }
+    drop(scratch);
+    assert_eq!(budget.snapshot().used(Class::Frame), 0);
     Ok(())
 }

@@ -4,7 +4,7 @@ use super::super::{
     CrtRand, M2BonePoseOverrides, M2BoneTransforms, M2Frame, M2GpuPlacementOwner, M2Playback, Mat4,
     RuntimeTerrainFrameError, WorldCameraFrame, append_triggered_events, unit_effects,
 };
-use crate::application::model_playback::M2ExpiredVariation;
+use crate::application::model_playback::M2BoneEvent;
 
 impl M2Frame {
     /// Freeze independent callback inputs after placement, without advancing any timer.
@@ -154,7 +154,7 @@ impl M2Frame {
             let mut event = |_: &mut M2Playback,
                              _: usize,
                              _: u32,
-                             event: &M2ExpiredVariation,
+                             event: &M2BoneEvent<'_>,
                              random: &mut CrtRand| {
                 self.bone_demand
                     .begin(&budget, source.model.animations().bones().len())?;
@@ -170,7 +170,7 @@ impl M2Frame {
                     M2BonePoseOverrides {
                         model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
                         bone_transforms: body_pose.bone_transforms(),
-                        bone_sequences: &event.bone_sequences,
+                        bone_sequences: event.bone_sequences,
                         ..Default::default()
                     },
                     self.bone_demand.bones(),
@@ -196,7 +196,12 @@ impl M2Frame {
                 }
                 Ok(())
             };
-            animation.advance_prepared_scene(now, random, Some(&mut event))?;
+            animation.advance_prepared_scene(
+                now,
+                random,
+                Some(&mut event),
+                Some((&budget, &mut self.event_clock_scratch)),
+            )?;
             if self.unit_effects.has_anchors(animation)
                 && let Some(playback) = &placement.playback
             {

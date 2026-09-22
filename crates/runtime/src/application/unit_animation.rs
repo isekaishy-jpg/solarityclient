@@ -1166,7 +1166,7 @@ impl UnitAnimationBehavior {
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.prepare_scene(scene_time_ms, random)?;
-        self.advance_prepared_scene(scene_time_ms, random, None)
+        self.advance_prepared_scene(scene_time_ms, random, None, None)
     }
 
     /// Unit movement, yaw and pending selections precede CM2Scene's callbacks.
@@ -1215,6 +1215,10 @@ impl UnitAnimationBehavior {
         scene_time_ms: f32,
         random: &mut CrtRand,
         event_callback: Option<&mut M2BoneEventCallback<'_>>,
+        event_storage: Option<(
+            &solarity_cpu::CpuStorageBudget,
+            &mut super::model_playback::PoseClockScratch,
+        )>,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let mut playback = self.playback.borrow_mut();
         let mut completed = |playback: &mut M2Playback,
@@ -1345,6 +1349,7 @@ impl UnitAnimationBehavior {
             random,
             Some(&mut completed),
             event_callback,
+            event_storage,
         )?;
         let event_window = playback.event_window(scene_time_ms);
         *self.scene_sample.borrow_mut() = Some(UnitAnimationSceneSample {

@@ -824,6 +824,29 @@ replacing four test-only unwraps with error propagation; production code is the
 same as in the complete test run. Formatting and diff checks pass. Evidence is
 `target/effect-records-tests.log` and `target/effect-records-clippy-final.log`.
 
+Immediate unit and mount bone-event callbacks now borrow the scan's frozen clock
+snapshot instead of cloning it for every tied event. A separate frame-owned clock
+bank is funded with the existing source-bounded callback scratch before scene
+mutation, and its preparation refuses before timer/cursor changes or RNG use.
+The bank stays separate from current-pose queries made inside mount callbacks,
+so a tied completion can change the live timer without changing earlier sampled
+event poses. The bounded playback iterator fills retained storage once per scan.
+Deferred events still receive independent owned snapshots and retain their
+original publication order; their outer/nested allocation accounting, resident
+playback slots and callback queue accounting remain open. This closes the hot
+immediate-callback snapshot allocation path, not the full playback lifecycle or
+remaining geometry/residency requirements. Build 177 remains installed.
+
+Validation: all 510 runtime library tests pass (30 existing ignores), including
+unit/mount/vehicle scenes and serial geometry parity. All 288 native callback
+fixture cases now use the admitted bank with stable addresses and no spare budget;
+they retain original callback order, timer mutations, blend state and RNG counts.
+The new snapshot case verifies refusal before scene/cursor/RNG mutation, exact
+parity with independently owned deferred snapshots, pointer reuse during dispatch,
+independent retained-event lifetime and final charge release. All-target/all-feature
+runtime Clippy with warnings denied, formatting and diff checks pass. Evidence is
+`target/event-clock-snapshot-tests.log` and `target/event-clock-snapshot-clippy.log`.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases

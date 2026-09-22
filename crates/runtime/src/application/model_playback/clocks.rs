@@ -6,11 +6,11 @@ use solarity_cpu::{
 use solarity_rendering::M2AnimationClock;
 
 #[derive(Default)]
-pub(in crate::application::terrain_frame::m2) struct PoseClockScratch {
+pub(in crate::application) struct PoseClockScratch {
     values: CpuBuffer<(u16, M2AnimationClock)>,
 }
 impl PoseClockScratch {
-    pub(in crate::application::terrain_frame::m2) fn include_storage(
+    pub(in crate::application) fn include_storage(
         &self,
         budget: &CpuStorageBudget,
         count: usize,
@@ -21,28 +21,36 @@ impl PoseClockScratch {
             self.values.replacement_credit(count),
         )
     }
-    pub(in crate::application::terrain_frame::m2) fn reserve_reserved(
+    pub(in crate::application) fn reserve_reserved(
         &mut self,
         fund: &mut CpuStorageReservation,
         count: usize,
     ) -> Result<(), CpuError> {
         self.values.reserve_reserved(fund, Kind::Scratch, count)
     }
-    pub(in crate::application::terrain_frame::m2) fn capture(
+    /// Reserve before a callback scan can change timers or consume random values.
+    pub(in crate::application) fn prepare(
+        &mut self,
+        budget: &CpuStorageBudget,
+        count: usize,
+    ) -> Result<(), CpuError> {
+        self.values
+            .reserve(budget, Class::Frame, Kind::Scratch, count)
+    }
+    pub(in crate::application) fn capture(
         &mut self,
         budget: &CpuStorageBudget,
         clocks: impl Iterator<Item = (u16, M2AnimationClock)>,
     ) -> Result<&[(u16, M2AnimationClock)], CpuError> {
         let count = clocks.size_hint().1.ok_or(CpuError::StorageSizeOverflow)?;
-        self.values
-            .reserve(budget, Class::Frame, Kind::Scratch, count)?;
+        self.prepare(budget, count)?;
         self.values.clear();
         for clock in clocks {
             self.values.push(clock)?;
         }
         Ok(&self.values)
     }
-    pub(in crate::application::terrain_frame::m2) fn values(&self) -> &[(u16, M2AnimationClock)] {
+    pub(in crate::application) fn values(&self) -> &[(u16, M2AnimationClock)] {
         &self.values
     }
 }

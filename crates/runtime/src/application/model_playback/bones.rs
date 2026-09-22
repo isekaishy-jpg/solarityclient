@@ -6,7 +6,7 @@ use solarity_rendering::{
     M2SequenceStartPhase, scan_m2_callbacks,
 };
 
-use super::{M2ExpiredVariation, M2Playback, M2PlaybackAdvance};
+use super::{M2BoneEvent, M2ExpiredVariation, M2Playback, M2PlaybackAdvance, PoseClockScratch};
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::random::CrtRand;
 
@@ -27,7 +27,7 @@ pub(in crate::application) type M2BoneEventCallback<'a> = dyn FnMut(
         &mut M2Playback,
         usize,
         u32,
-        &M2ExpiredVariation,
+        &M2BoneEvent<'_>,
         &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError>
     + 'a;
@@ -370,7 +370,7 @@ impl M2Playback {
         random: &mut CrtRand,
         callback: Option<&mut M2BoneCompletionCallback<'_>>,
     ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
-        self.clock_with_bone_callbacks(model, now, random, callback, None)
+        self.clock_with_bone_callbacks(model, now, random, callback, None, None)
     }
 
     pub(in crate::application) fn clock_with_bone_callbacks(
@@ -380,7 +380,11 @@ impl M2Playback {
         random: &mut CrtRand,
         mut callback: Option<&mut M2BoneCompletionCallback<'_>>,
         mut event_callback: Option<&mut M2BoneEventCallback<'_>>,
+        mut event_storage: Option<(&solarity_cpu::CpuStorageBudget, &mut PoseClockScratch)>,
     ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
+        if let Some((budget, scratch)) = &mut event_storage {
+            scratch.prepare(budget, self.bone_playback.len())?;
+        }
         self.prepare_bone_scene(now);
         for slot in &mut self.bone_playback {
             slot.playback.prepare_bone_scene(now);
@@ -409,27 +413,42 @@ impl M2Playback {
                 }
                 // 830FB0 samples every queued event's position during the scan,
                 // before any tied completion callback can replace either pose.
-                let event_pose = queue.iter().any(|queued| queued.event.is_some()).then(|| {
+                let event_pose = if queue.iter().any(|queued| queued.event.is_some()) {
                     let clock = self.sample_clock(now);
-                    (clock, self.bone_sequence_clocks(model, clock, now))
-                });
+                    let bones =
+                        if let Some((budget, scratch)) = &mut event_storage {
+                            std::borrow::Cow::Borrowed(scratch.capture(
+                                budget,
+                                self.bone_sequence_clock_iter(model, clock, now),
+                            )?)
+                        } else {
+                            std::borrow::Cow::Owned(self.bone_sequence_clocks(model, clock, now))
+                        };
+                    Some((clock, bones))
+                } else {
+                    None
+                };
                 for queued in queue.iter().copied() {
                     if let Some(index) = queued.event {
                         let Some((clock, bones)) = event_pose.as_ref() else {
                             continue;
                         };
-                        let event = M2ExpiredVariation {
+                        let event = M2BoneEvent {
                             clock: *clock,
                             event_window: M2EventTimeWindow::queued_event(
                                 queued.slot.sequence,
                                 index,
                             ),
-                            bone_sequences: bones.clone(),
+                            bone_sequences: bones,
                         };
                         if let Some(callback) = event_callback.as_mut() {
                             callback(self, index, queued.scene_time_ms, &event, random)?;
                         } else {
-                            expired_variations.push(event);
+                            expired_variations.push(M2ExpiredVariation {
+                                clock: event.clock,
+                                event_window: event.event_window,
+                                bone_sequences: event.bone_sequences.to_vec(),
+                            });
                         }
                         continue;
                     }

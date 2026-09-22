@@ -1,8 +1,7 @@
 //! Pure unit pose work follows callbacks and precedes ordered scene publication.
 
 mod admission;
-mod clocks;
-pub(in crate::application::terrain_frame::m2) use clocks::PoseClockScratch;
+pub(in crate::application::terrain_frame::m2) use crate::application::model_playback::PoseClockScratch;
 mod frame;
 mod input;
 mod late;
