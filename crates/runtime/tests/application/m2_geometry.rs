@@ -425,6 +425,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         )
         .frame(1.)?;
         assert_worker_admission_refusal(&cpu, candidate, camera)?;
+        assert_finalization_start_refusal(&cpu, candidate)?;
         let mut abandoned = candidate.begin_visible_draws_with_unit_effects(
             &renderer,
             &cpu,
@@ -536,91 +537,168 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
     Ok(())
 }
 
-/// Refused worker growth must return living effects without executing any of
-/// their next tick. This uses the actual worker entry, not only the byte helper.
+/// Each model fits separately; refusal of the complete group must leave both
+/// living simulations and every output allocation untouched at the real worker entry.
 fn assert_worker_admission_refusal(
     cpu: &CpuExecutor,
     frame: &mut M2Frame,
     camera: solarity_rendering::WorldCameraFrame,
 ) -> Result<(), Box<dyn Error>> {
-    use super::job::{GeometryContext, GeometryJob};
+    use super::{chunk::GeometryChunk, job::GeometryContext, owner::GeometryOwner};
     use solarity_cpu::{
-        CpuStorageBudget, CpuStorageClass, CpuStoragePlan, CpuWorkerScratch, FrameBatch,
+        CpuStorageBudget, CpuStorageClass, CpuStoragePlan, CpuStorageWorkingSet, CpuWorkerScratch,
+        FrameBatch,
     };
-
-    let input = frame
+    let inputs: Vec<_> = frame
         .geometry_batch
         .jobs
         .iter()
         .filter_map(|owner| owner.job().input)
-        .find(|input| input.visible.is_some())
-        .ok_or("visible model for refusal")?;
-    let source = frame.sources[input.source_index].as_ref().ok_or("source")?;
-    let placement = &mut frame.placements[input.placement_index];
-    let particles: Vec<_> = placement
-        .particles
-        .iter()
-        .map(|particle| particle.simulation.particles().to_vec())
+        .filter(|input| input.visible.is_some())
+        .take(2)
         .collect();
-    let ribbons: Vec<Vec<_>> = placement
-        .ribbons
-        .iter()
-        .map(|ribbon| ribbon.sections().cloned().collect())
-        .collect();
-    // Leave enough space for the palette alone, but not the connected model.
-    // The former sequential admission allocated the palette before refusing outputs.
-    let mut palette_plan = solarity_cpu::CpuStorageWorkingSet::default();
+    assert_eq!(inputs.len(), 2);
     let probe = CpuStorageBudget::new(CpuStoragePlan::new(usize::MAX, 0, 0));
-    M2BonePose::default().include_cpu_storage(
-        &probe,
-        source.model.animations().bones().len(),
-        &mut palette_plan,
-    )?;
-    let refused = CpuStorageBudget::new(CpuStoragePlan::new(palette_plan.bytes(), 0, 0));
-    let mut job = GeometryJob {
-        input: Some(input),
-        context: Some(GeometryContext {
-            storage: refused.clone(),
+    let mut chunk = GeometryChunk::default();
+    chunk.reserve(cpu.storage())?;
+    chunk.scratch = Some(CpuWorkerScratch::new(cpu, CpuStorageClass::Frame)?);
+    let mut particles = Vec::new();
+    let mut ribbons = Vec::new();
+    let mut largest = 0;
+    let mut combined = CpuStorageWorkingSet::default();
+    for input in inputs {
+        let source = frame.sources[input.source_index].as_ref().ok_or("source")?;
+        let placement = &mut frame.placements[input.placement_index];
+        particles.push(
+            placement
+                .particles
+                .iter()
+                .map(|particle| particle.simulation.particles().to_vec())
+                .collect::<Vec<_>>(),
+        );
+        ribbons.push(
+            placement
+                .ribbons
+                .iter()
+                .map(|ribbon| ribbon.sections().cloned().collect::<Vec<_>>())
+                .collect::<Vec<_>>(),
+        );
+        let mut owner = GeometryOwner::new(cpu.storage())?;
+        let job = owner.job_mut();
+        job.input = Some(input);
+        job.context = Some(GeometryContext {
+            storage: probe.clone(),
             source: Arc::clone(source),
             camera,
             effect_scale: M2CameraEffectScale::EXTERNAL_CAMERA,
             twinkle: Arc::clone(&frame.particle_twinkle),
-        }),
-        ..Default::default()
-    };
-    std::mem::swap(&mut job.particles, &mut placement.particles);
-    std::mem::swap(&mut job.ribbons, &mut placement.ribbons);
-    let scratch = CpuWorkerScratch::new(cpu, CpuStorageClass::Frame)?;
-    let mut jobs = vec![(job, scratch)];
-    let mut batch = FrameBatch::with_context(
-        |(job, scratch): &mut (GeometryJob, CpuWorkerScratch<usize>), context| {
-            job.execute(context, scratch);
-            solarity_cpu::JobOutcome::Succeeded
-        },
-    );
-    batch.start(cpu, &mut jobs)?;
-    batch.reclaim(&mut jobs)?;
-    let (job, _) = &mut jobs[0];
-    assert!(matches!(
-        job.result.as_ref(),
-        Some(Err(RuntimeTerrainFrameError::Cpu(_)))
-    ));
-    assert_eq!(job.pose.allocated_bytes(), 0);
-    assert_eq!(job.visible_draws.capacity(), 0);
-    assert_eq!(job.material_poses.capacity(), 0);
-    assert_eq!(job.particle_vertices.capacity(), 0);
-    assert_eq!(job.ribbon_vertices.capacity(), 0);
+        });
+        std::mem::swap(&mut job.particles, &mut placement.particles);
+        std::mem::swap(&mut job.ribbons, &mut placement.ribbons);
+        let mut individual = CpuStorageWorkingSet::default();
+        job.include_working_set(&probe, &input, source, &mut individual)?;
+        largest = largest.max(individual.bytes());
+        job.include_working_set(&probe, &input, source, &mut combined)?;
+        chunk.jobs.push(owner)?;
+    }
+    assert!(combined.bytes() > largest);
+    let refused = CpuStorageBudget::new(CpuStoragePlan::new(largest, 0, 0));
+    for owner in chunk.jobs.iter_mut() {
+        owner.job_mut().context.as_mut().ok_or("context")?.storage = refused.clone();
+    }
+    let mut chunks = vec![chunk];
+    let mut batch = FrameBatch::with_context(GeometryChunk::execute);
+    batch.start(cpu, &mut chunks)?;
+    batch.reclaim(&mut chunks)?;
+    for (index, owner) in chunks[0].jobs.iter_mut().enumerate() {
+        let job = owner.job_mut();
+        assert!(matches!(
+            job.result.as_ref(),
+            Some(Err(RuntimeTerrainFrameError::Cpu(_)))
+        ));
+        assert_eq!(job.pose.allocated_bytes(), 0);
+        assert_eq!(job.visible_draws.capacity(), 0);
+        assert_eq!(job.material_poses.capacity(), 0);
+        assert_eq!(job.particle_vertices.capacity(), 0);
+        assert_eq!(job.ribbon_vertices.capacity(), 0);
+        for (before, after) in particles[index].iter().zip(&job.particles) {
+            assert_eq!(before.as_slice(), after.simulation.particles());
+        }
+        for (before, after) in ribbons[index].iter().zip(&job.ribbons) {
+            assert!(before.iter().eq(after.sections()));
+        }
+        assert!(
+            job.context.is_none(),
+            "refused group releases immutable resource pins"
+        );
+        let placement = &mut frame.placements[job.input.ok_or("input")?.placement_index];
+        std::mem::swap(&mut job.particles, &mut placement.particles);
+        std::mem::swap(&mut job.ribbons, &mut placement.ribbons);
+    }
     assert_eq!(refused.snapshot().used(CpuStorageClass::Frame), 0);
-    assert!(job.visible_draws.is_empty());
-    assert!(job.particle_vertices.is_empty());
-    assert!(job.ribbon_vertices.is_empty());
-    for (before, after) in particles.iter().zip(&job.particles) {
-        assert_eq!(before.as_slice(), after.simulation.particles());
+    Ok(())
+}
+
+/// A failed scheduler start happens after capture; the ordinary return path must
+/// restore all frame vectors/model owners without assembling or losing their storage.
+fn assert_finalization_start_refusal(
+    cpu: &CpuExecutor,
+    frame: &mut M2Frame,
+) -> Result<(), Box<dyn Error>> {
+    use solarity_cpu::{CpuError, FrameBatch, FrameBatchPlan};
+    let mut holds = Vec::new();
+    loop {
+        let mut hold = FrameBatch::new(|_: &mut ()| {});
+        match hold.begin(cpu, FrameBatchPlan::new(0, 0)) {
+            Ok(()) => holds.push(hold),
+            Err(CpuError::AtCapacity { .. }) => break,
+            Err(error) => return Err(error.into()),
+        }
     }
-    for (before, after) in ribbons.iter().zip(&job.ribbons) {
-        assert!(before.iter().eq(after.sections()));
-    }
-    std::mem::swap(&mut job.particles, &mut placement.particles);
-    std::mem::swap(&mut job.ribbons, &mut placement.ribbons);
+    let counts = (
+        frame.visible_draws.len(),
+        frame.particle_vertices.len(),
+        frame.ribbon_vertices.len(),
+        frame.geometry_batch.jobs.len(),
+    );
+    let addresses = (
+        frame.visible_draws.as_ptr(),
+        frame.particle_vertices.as_ptr(),
+        frame.ribbon_vertices.as_ptr(),
+        frame.geometry_batch.jobs.as_ptr(),
+    );
+    let mut work = super::super::diagnostics::Work::new();
+    assert!(matches!(
+        frame.begin_finalization(cpu, &mut work, M2TransparentPass::One),
+        Err(RuntimeTerrainFrameError::Cpu(CpuError::AtCapacity { .. }))
+    ));
+    assert!(
+        frame.geometry_batch.jobs.is_empty(),
+        "refused captured jobs remain in their owned cell"
+    );
+    assert!(
+        frame
+            .finish_finalization(&mut FrameWait::Offline, Some(&mut work))?
+            .is_none()
+    );
+    assert_eq!(
+        counts,
+        (
+            frame.visible_draws.len(),
+            frame.particle_vertices.len(),
+            frame.ribbon_vertices.len(),
+            frame.geometry_batch.jobs.len()
+        )
+    );
+    assert_eq!(
+        addresses,
+        (
+            frame.visible_draws.as_ptr(),
+            frame.particle_vertices.as_ptr(),
+            frame.ribbon_vertices.as_ptr(),
+            frame.geometry_batch.jobs.as_ptr()
+        )
+    );
+    drop(holds);
     Ok(())
 }

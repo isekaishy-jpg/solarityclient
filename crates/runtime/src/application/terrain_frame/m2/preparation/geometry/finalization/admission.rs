@@ -1,7 +1,8 @@
 //! Final storage is admitted from completed immutable outputs before worker transfer.
 
-use super::super::super::super::{M2Frame, RuntimeTerrainFrameError};
+use super::super::super::super::RuntimeTerrainFrameError;
 use super::super::GeometryOwner;
+use super::FinalStreams;
 use solarity_cpu::{
     ByteReservation, CpuError, CpuScratch, CpuStorageBudget, CpuStorageClass as Class,
     CpuStorageKind as Kind, CpuStorageReservation, CpuStorageWorkingSet,
@@ -23,7 +24,7 @@ pub(super) struct OutputMemory {
 }
 
 /// Exact live output counts are immutable after the geometry phase is terminal.
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub(super) struct OutputCounts {
     visible_draws: usize,
     shadow_draws: usize,
@@ -88,13 +89,13 @@ fn add(total: &mut usize, count: usize) -> Result<(), CpuError> {
 
 impl OutputMemory {
     /// Proves the connected output/sorting working set before changing retained capacities.
-    pub(super) fn prepare(
-        &mut self,
-        frame: &mut M2Frame,
+    pub(super) fn reservation_bytes(
+        &self,
+        frame: &FinalStreams,
         budget: &CpuStorageBudget,
-        sorting: &mut CpuScratch<usize>,
+        sorting: &CpuScratch<usize>,
         counts: OutputCounts,
-    ) -> Result<(), RuntimeTerrainFrameError> {
+    ) -> Result<usize, CpuError> {
         let sorting_count = counts
             .visible_draws
             .max(counts.particle_draws)
@@ -197,70 +198,82 @@ impl OutputMemory {
             sorting.reservation_bytes(budget, Class::Frame, sorting_count)?,
             sorting.replacement_credit(sorting_count),
         )?;
-        // Protect the exact sequential peak, recycling each freed old allocation
-        // before funding later streams. No competing producer can take that headroom.
-        let mut reservation = budget.reserve_working_set(Class::Frame, working_set.bytes())?;
+        Ok(working_set.bytes())
+    }
+
+    /// Funds renderer output streams and sort scratch from the scheduler's reservation.
+    pub(super) fn reserve_reserved(
+        &mut self,
+        frame: &mut FinalStreams,
+        reservation: &mut CpuStorageReservation,
+        sorting: &mut CpuScratch<usize>,
+        counts: OutputCounts,
+    ) -> Result<(), CpuError> {
+        let sorting_count = counts
+            .visible_draws
+            .max(counts.particle_draws)
+            .max(counts.ribbon_draws);
         reserve(
             &mut frame.visible_draws,
             &mut self.visible_draws,
-            &mut reservation,
+            reservation,
             counts.visible_draws,
         )?;
         reserve(
             &mut frame.shadow_draws,
             &mut self.shadow_draws,
-            &mut reservation,
+            reservation,
             counts.shadow_draws,
         )?;
         reserve(
             &mut frame.environment_shadow_draws,
             &mut self.environment_shadow_draws,
-            &mut reservation,
+            reservation,
             counts.environment_shadow_draws,
         )?;
         reserve(
             &mut frame.particle_draws,
             &mut self.particle_draws,
-            &mut reservation,
+            reservation,
             counts.particle_draws,
         )?;
         reserve(
             &mut frame.ribbon_draws,
             &mut self.ribbon_draws,
-            &mut reservation,
+            reservation,
             counts.ribbon_draws,
         )?;
         reserve(
             &mut frame.transparent_elements,
             &mut self.transparent_elements,
-            &mut reservation,
+            reservation,
             counts.transparent_elements,
         )?;
         reserve(
             &mut frame.particle_vertices,
             &mut self.particle_vertices,
-            &mut reservation,
+            reservation,
             counts.particle_vertices,
         )?;
         reserve(
             &mut frame.particle_indices,
             &mut self.particle_indices,
-            &mut reservation,
+            reservation,
             counts.particle_indices,
         )?;
         reserve(
             &mut frame.ribbon_vertices,
             &mut self.ribbon_vertices,
-            &mut reservation,
+            reservation,
             counts.ribbon_vertices,
         )?;
         reserve(
             &mut frame.recoverable_errors,
             &mut self.recoverable_errors,
-            &mut reservation,
+            reservation,
             counts.recoverable_errors,
         )?;
-        sorting.reserve_reserved(&mut reservation, sorting_count)?;
+        sorting.reserve_reserved(reservation, sorting_count)?;
         Ok(())
     }
 }

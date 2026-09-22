@@ -663,6 +663,44 @@ Clippy with warnings denied, formatting and diff checks pass. Evidence is
 `target/connected-phase-cpu-tests.log`, `target/connected-phase-runtime-tests.log`
 and `target/connected-phase-clippy.log`.
 
+The following geometry batch extends connected admission across each complete
+bounded dispatch group. The worker first plans all member palettes, draw/material
+streams, particles and ribbons, then reserves their combined sequential peak.
+Only after every valid member is funded can any simulation advance. Per-model
+layout errors remain at their ordered result slots; other valid members still
+run. Group capacity failure returns every captured particle/ribbon simulation
+unadvanced and releases
+its immutable source pins. Planning stays on the worker, uses a fixed 16-entry
+stack table and adds no coordinator scan or barrier across independent roots.
+Cold group admission has its own profile scope; successful per-model calibration
+continues to measure numeric preparation and resource-pin release.
+
+Finalization now captures retained renderer streams and completed model owners in
+its existing owned cell before admission. Its complete aggregate output/sorting
+bound joins scheduler nodes/readiness in one protected reservation. A refused
+start marks the frame failed and keeps those captured owners in the cell for the
+existing abandonment return;
+there is no separately opened incremental epoch or input transfer before the
+combined reservation succeeds. Successful workers retain original model order,
+relocation and transparent sorting. CPU working-set descriptions are copyable
+arithmetic plans; allocation reservations remain uniquely owned.
+
+This closes group-wide pre-simulation storage and aggregate finalization admission.
+A reservation spanning all incrementally discovered geometry groups before the
+first dispatch is still required, as are earlier input/return staging and other
+domain accounting gaps. The full cutover is not complete. Build 177 remains the
+installed package; this is source work only.
+
+Validation: 151 CPU tests and 505 runtime library tests pass (30 existing runtime
+tests ignored). The final runtime run includes the failed-frame transition and
+the actual captured-stream refusal/return path. Coverage includes a two-model
+group that individually fits but collectively refuses without advancing either
+simulation, combined scheduler/output refusal, warm buffer reuse, and moving-scene
+serial parity. All-target/all-feature CPU/runtime Clippy with warnings denied,
+formatting and diff checks pass. Evidence is
+`target/geometry-group-cpu-tests.log`, `target/geometry-group-runtime-final.log`
+and `target/geometry-group-clippy.log`.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases

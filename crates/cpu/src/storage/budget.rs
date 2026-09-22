@@ -357,7 +357,7 @@ impl CpuStorageReservation {
 
 /// Computes peak additional headroom in the exact allocation/retirement order.
 /// Retired old buffers fund later replacements without exposing their space to competitors.
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct CpuStorageWorkingSet {
     live: usize,
     peak: usize,

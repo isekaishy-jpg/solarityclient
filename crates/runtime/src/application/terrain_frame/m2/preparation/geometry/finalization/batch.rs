@@ -37,27 +37,6 @@ impl M2Frame {
             )?)?;
         }
         state.retained[0].transfer(cpu.storage(), Class::Frame, Kind::Scratch)?;
-        // Reserve scheduler nodes/readiness before output growth can consume their headroom.
-        state
-            .pending
-            .begin(cpu, solarity_cpu::FrameBatchPlan::new(1, 0))?;
-        // The accounting owner can be reborrowed independently of the M2 fields.
-        // Restore it before propagating a fallible admission result.
-        let job = state.retained[0].value_mut();
-        let mut memory = std::mem::take(&mut job.memory);
-        let mut sorting = std::mem::take(&mut job.sorting);
-        let admitted = memory.prepare(self, cpu.storage(), &mut sorting, counts);
-        let job = self.geometry_batch.finalization.retained[0].value_mut();
-        job.memory = memory;
-        job.sorting = sorting;
-        if let Err(error) = admitted {
-            let state = &mut self.geometry_batch.finalization;
-            state.pending.close();
-            // No input was published: retiring this empty epoch cannot run domain work.
-            let _ = state.pending.reclaim_into(&mut state.retained.writer());
-            return Err(error);
-        }
-
         let mut cell = self
             .geometry_batch
             .finalization
@@ -72,17 +51,8 @@ impl M2Frame {
         job.result = None;
         let state = &mut self.geometry_batch.finalization;
         state.owns_inputs = true;
-        let mut owned = Some(cell);
-        if let Err(error) = state.pending.push(&mut owned) {
-            state.retained.push(
-                owned.unwrap_or_else(|| unreachable!("refused finalization keeps its input")),
-            )?;
-            state.pending.close();
-            let _ = state.pending.reclaim_into(&mut state.retained.writer());
-            return Err(error.into());
-        }
-        state.pending.close();
-        state.submitted = true;
+        state.retained.push(cell)?;
+        state.start(cpu, counts)?;
         Ok(())
     }
 
@@ -165,5 +135,34 @@ impl M2Frame {
             None if !was_submitted => Ok(None),
             None => Err(CpuError::CompletionLost.into()),
         }
+    }
+}
+
+impl super::Finalization {
+    /// Captured streams stay in the retained cell if the connected phase cannot fit.
+    pub(super) fn start(
+        &mut self,
+        cpu: &CpuExecutor,
+        counts: super::admission::OutputCounts,
+    ) -> Result<(), CpuError> {
+        let job = self.retained[0].value();
+        let bytes =
+            job.memory
+                .reservation_bytes(&job.streams, cpu.storage(), &job.sorting, counts)?;
+        self.pending.start_costed_graph_with_storage(
+            cpu,
+            &solarity_cpu::FrameGraphTemplate::independent(1),
+            &mut self.retained,
+            &[],
+            &[],
+            bytes,
+            |cells, reservation| {
+                let job = cells[0].value_mut();
+                job.memory
+                    .reserve_reserved(&mut job.streams, reservation, &mut job.sorting, counts)
+            },
+        )?;
+        self.submitted = true;
+        Ok(())
     }
 }

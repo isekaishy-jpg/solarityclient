@@ -14,7 +14,7 @@ const TARGET: Duration = Duration::from_micros(100);
 #[derive(Default)]
 pub(super) struct GeometryChunk {
     pub(super) jobs: solarity_cpu::CpuBuffer<GeometryOwner>,
-    scratch: Option<solarity_cpu::CpuWorkerScratch<usize>>,
+    pub(super) scratch: Option<solarity_cpu::CpuWorkerScratch<usize>>,
     estimated: Duration,
     unknown: bool,
 }
@@ -79,14 +79,95 @@ impl GeometryChunk {
         context.diagnostic_value("m2.geometry.chunk_models", self.jobs.len() as u64);
         // Admission transferred living simulation state. Complete its ordered
         // model updates even if the consumer withdraws; never discard half a tick.
+        if let Err(error) = self.admit_outputs() {
+            self.fail_admission(error);
+            return solarity_cpu::JobOutcome::Succeeded;
+        }
         let scratch = self
             .scratch
             .as_ref()
             .unwrap_or_else(|| unreachable!("admitted draw chunk pins worker scratch"));
         for job in self.jobs.writer().iter_mut() {
-            job.job_mut().execute(context, scratch);
+            let job = job.job_mut();
+            if job.result.is_none() {
+                job.execute(context, scratch);
+            }
         }
         solarity_cpu::JobOutcome::Succeeded
+    }
+
+    /// The bounded group is fully planned and funded before its first numeric kernel.
+    /// Layout errors keep their own ordered result; other valid members still run.
+    fn admit_outputs(&mut self) -> Result<(), RuntimeTerrainFrameError> {
+        let _profile = solarity_profiling::profile!("m2.geometry.group_admission");
+        let Some(first) = self.jobs.first() else {
+            return Ok(());
+        };
+        let budget = first
+            .job()
+            .context
+            .as_ref()
+            .unwrap_or_else(|| unreachable!("queued geometry owns its context"))
+            .storage
+            .clone();
+        let mut working_set = solarity_cpu::CpuStorageWorkingSet::default();
+        let mut counts: [Option<super::storage::OutputCounts>; MAX_MODELS] =
+            std::array::from_fn(|_| None);
+        for (owner, counts) in self.jobs.iter_mut().zip(&mut counts) {
+            let job = owner.job_mut();
+            let context = job
+                .context
+                .as_ref()
+                .unwrap_or_else(|| unreachable!("queued geometry owns its context"));
+            let input = job
+                .input
+                .as_ref()
+                .unwrap_or_else(|| unreachable!("queued geometry owns its input"));
+            let checkpoint = working_set;
+            match job.include_working_set(&budget, input, &context.source, &mut working_set) {
+                Ok(planned) => *counts = Some(planned),
+                Err(error) => {
+                    working_set = checkpoint;
+                    job.result = Some(Err(error));
+                    job.context = None;
+                }
+            }
+        }
+        let mut reservation =
+            budget.reserve_working_set(CpuStorageClass::Frame, working_set.bytes())?;
+        for (owner, counts) in self.jobs.iter_mut().zip(counts) {
+            let Some(counts) = counts else {
+                continue;
+            };
+            let job = owner.job_mut();
+            let context = job
+                .context
+                .take()
+                .unwrap_or_else(|| unreachable!("validated geometry owns its context"));
+            let input = job
+                .input
+                .unwrap_or_else(|| unreachable!("validated geometry owns its input"));
+            let admitted =
+                job.reserve_working_set(&mut reservation, &input, &context.source, counts);
+            job.context = Some(context);
+            admitted?;
+        }
+        Ok(())
+    }
+
+    /// A refused group returns every unadvanced effect owner. Keep preexisting
+    /// layout failures in order and report capacity failure at the first valid model.
+    fn fail_admission(&mut self, error: RuntimeTerrainFrameError) {
+        let mut error = Some(error);
+        for owner in self.jobs.iter_mut() {
+            let job = owner.job_mut();
+            if job.result.is_none() {
+                job.result = Some(Err(error
+                    .take()
+                    .unwrap_or_else(|| solarity_cpu::CpuError::DependencyFailed.into())));
+            }
+            job.context = None;
+        }
     }
 
     /// Ordered reclamation returns every model, including failed/unexecuted jobs.

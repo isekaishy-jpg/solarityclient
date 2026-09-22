@@ -94,12 +94,20 @@ impl PendingM2Frame<'_> {
             if frame.geometry_is_finished() {
                 let result = frame.finish_geometry(&mut FrameWait::Offline);
                 frame.restore_geometry_states();
-                result?;
-                frame.begin_finalization(
+                if let Err(error) = result {
+                    self.stage = FrameStage::Failed;
+                    return Err(error);
+                }
+                if let Err(error) = frame.begin_finalization(
                     cpu,
                     &mut self.admission.work,
                     self.view.first_transparent_pass,
-                )?;
+                ) {
+                    // Captured streams may already belong to the finalization cell.
+                    // Only abandonment may return them after a refused phase start.
+                    self.stage = FrameStage::Failed;
+                    return Err(error);
+                }
                 self.stage = FrameStage::Finalization;
             }
         }

@@ -138,3 +138,94 @@ fn connected_output_refusal_preserves_every_buffer_before_any_growth() -> Result
     assert_eq!(larger.snapshot().used(Class::Frame), 0);
     Ok(())
 }
+
+#[test]
+fn finalization_refuses_scheduler_and_aggregate_outputs_as_one_phase() -> Result<(), Box<dyn Error>>
+{
+    use super::super::{Finalization, FinalizationJob};
+    use solarity_cpu::{
+        CpuExecutionPlan, CpuExecutor, CpuOwnedCell, CpuPoolConfig, CpuStorageKind as Kind,
+    };
+    use std::num::NonZeroUsize;
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        CpuExecutionPlan::new(0, 1, 1, 1)?,
+        NonZeroUsize::MIN,
+        CpuStoragePlan::new(1 << 20, 1 << 20, 0),
+    ))?;
+    let budget = cpu.storage().clone();
+    let baseline = budget.snapshot().used(Class::Frame);
+    let mut phase = Finalization::default();
+    phase
+        .retained
+        .reserve(&budget, Class::Frame, Kind::Metadata, 1)?;
+    phase.retained.push(CpuOwnedCell::new_with(
+        &budget,
+        Class::Frame,
+        Kind::Scratch,
+        || FinalizationJob {
+            first_pass: Some(solarity_rendering::M2TransparentPass::One),
+            ..Default::default()
+        },
+    )?)?;
+    phase.owns_inputs = true;
+    let counts = super::OutputCounts {
+        visible_draws: 4,
+        particle_vertices: 12,
+        ribbon_vertices: 8,
+        ..Default::default()
+    };
+    let job = phase.retained[0].value();
+    let outputs = job
+        .memory
+        .reservation_bytes(&job.streams, &budget, &job.sorting, counts)?;
+    let pressure = budget.reserve(
+        Class::Frame,
+        Kind::Scratch,
+        budget.snapshot().limit(Class::Frame) - budget.snapshot().used(Class::Frame) - outputs,
+    )?;
+    let held = budget.snapshot().used(Class::Frame);
+    assert!(matches!(
+        phase.start(&cpu, counts),
+        Err(CpuError::StorageAtCapacity { .. })
+    ));
+    assert!(!phase.submitted);
+    assert!(phase.owns_inputs);
+    assert_eq!(phase.retained.len(), 1);
+    let job = phase.retained[0].value();
+    assert_eq!(job.streams.visible_draws.capacity(), 0);
+    assert_eq!(job.streams.particle_vertices.capacity(), 0);
+    assert_eq!(job.streams.ribbon_vertices.capacity(), 0);
+    assert_eq!(budget.snapshot().used(Class::Frame), held);
+    drop(pressure);
+    phase.start(&cpu, counts)?;
+    phase.pending.reclaim_into(&mut phase.retained.writer())?;
+    phase.submitted = false;
+    let job = phase.retained[0].value();
+    assert!(job.result.as_ref().is_some_and(Result::is_ok));
+    let addresses = (
+        job.streams.visible_draws.as_ptr(),
+        job.streams.particle_vertices.as_ptr(),
+        job.streams.ribbon_vertices.as_ptr(),
+    );
+    let warm = budget.snapshot().used(Class::Frame);
+    let pressure = budget.reserve(
+        Class::Frame,
+        Kind::Scratch,
+        budget.snapshot().limit(Class::Frame) - warm,
+    )?;
+    phase.start(&cpu, counts)?;
+    phase.pending.reclaim_into(&mut phase.retained.writer())?;
+    let job = phase.retained[0].value();
+    assert_eq!(
+        addresses,
+        (
+            job.streams.visible_draws.as_ptr(),
+            job.streams.particle_vertices.as_ptr(),
+            job.streams.ribbon_vertices.as_ptr()
+        )
+    );
+    drop((phase, pressure));
+    cpu.shutdown()?;
+    assert_eq!(budget.snapshot().used(Class::Frame), baseline);
+    Ok(())
+}
