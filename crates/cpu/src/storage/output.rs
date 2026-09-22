@@ -79,6 +79,19 @@ impl<T> CpuBuffer<T> {
     pub fn truncate(&mut self, length: usize) {
         self.values.writer().truncate(length);
     }
+    /// Initializes slots only within already admitted capacity.
+    /// # Errors
+    /// Capacity refusal leaves the length and values unchanged and never calls the factory.
+    pub fn resize_with(
+        &mut self,
+        length: usize,
+        create: impl FnMut() -> T,
+    ) -> Result<(), CpuError> {
+        let additional = length.saturating_sub(self.len());
+        self.writer().require(additional)?;
+        self.values.resize_with(length, create);
+        Ok(())
+    }
     /// Appends one value to admitted storage.
     /// # Errors
     /// Exhausted capacity leaves all existing output unchanged.

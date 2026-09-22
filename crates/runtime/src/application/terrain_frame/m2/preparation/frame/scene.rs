@@ -77,6 +77,26 @@ impl M2Frame {
             self.compact_sources();
         }
         self.publish_placement_topology();
+        let dynamic = self.placement_visibility.dynamic_scene_indices();
+        let slots = dynamic.iter().copied().max().map_or(Ok(0), |index| {
+            index
+                .checked_add(1)
+                .ok_or(solarity_cpu::CpuError::StorageSizeOverflow)
+        })?;
+        self.scene_poses
+            .prepare_storage(cpu.storage(), slots, dynamic.len())?;
+        self.pose_batch.prepare_storage(
+            cpu.storage(),
+            self.placements.len(),
+            self.placement_visibility.dynamic_indices().len(),
+        )?;
+        let receivers = self
+            .placements
+            .len()
+            .checked_add(self.unit_effects.pending_placement_count())
+            .ok_or(solarity_cpu::CpuError::StorageSizeOverflow)?;
+        self.receiver_frame
+            .prepare_storage(cpu.storage(), receivers)?;
         // Scene callbacks run before draw admission and may sample offscreen roots.
         // Admit their shared named-bone scratch against all current source bounds.
         self.bone_samples_scratch.reserve_cpu_storage(

@@ -567,6 +567,35 @@ CPU/asset/runtime Clippy with warnings denied, formatting and diff checks pass.
 Logs: `target/frame-inputs-tests-final.log`, `target/frame-inputs-runtime.log`
 and `target/frame-inputs-clippy.log`.
 
+The following pose/receiver batch replaces the root-pose job/index/handle arrays,
+scene callback cache/staging/index/handle/late-return arrays and all four receiver
+bookkeeping arrays with admitted CPU buffers. Known dynamic scene and placement
+bounds reserve connected groups before vehicle timing and unit callbacks. Late
+or newly discovered indices preflight their complete metadata group before taking
+a cached pose or changing recorded receiver demand. Scene growth stays geometric;
+fixed-capacity initialization and reclamation retain backing ownership throughout
+worker submission, native servicing and exceptional return.
+
+Production pose admission requires its configured executor. The independent
+serial fixtures alone may use a test-owned ledger without an executor; they keep
+their serial sampling and authored publication behavior. Receiver callbacks,
+forward ancestry, event order and RNG ownership remain on main. This closes those
+retained arrays, while nested pose override/sequence inputs, other resident domain
+allocations and complete all-model phase reservation remain required. Build 176
+remains installed; this is source work with no new client package or FPS run.
+
+Validation passes all 149 CPU tests and all 502 runtime unit tests, with 30
+existing runtime ignores. New checks cover factory-free capacity refusal,
+connected pose/receiver admission, preserved indices and recorded ancestry on
+refusal, warm allocation identity, and retired topology truncation. The full
+runtime run also exposed two pre-existing pressure fixtures that exhausted bytes
+before the newly admitted namespace controls could be configured. They now apply
+pressure after control admission and still verify the original encoded-read and
+effect-request failures. All-target/all-feature CPU/runtime Clippy with warnings
+denied, formatting and diff checks pass. Logs are
+`target/pose-receiver-cpu-tests.log`, `target/pose-receiver-runtime-final.log`
+and `target/pose-receiver-clippy.log`.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases

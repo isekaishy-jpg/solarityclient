@@ -74,6 +74,7 @@ impl M2Frame {
         self.glue_point_lights.clear();
         self.scene_lighting.clear();
         self.receiver_frame.clear();
+        let receiver_storage = super::poses::storage::budget(cpu)?;
         let mut particle_vertex_capacity = 0_usize;
         let mut particle_index_capacity = 0_usize;
         frame_profile.mark("scene setup");
@@ -812,6 +813,7 @@ impl M2Frame {
             // ancestry inputs here; the final demand pass selects actual consumers.
             let scene_index = if world_lighting.is_some() {
                 Some(self.receiver_frame.record(
+                    &receiver_storage,
                     placement_index,
                     self.placement_visibility.light_parent(placement_index),
                     placement.transform.w_axis.truncate(),

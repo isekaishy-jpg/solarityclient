@@ -5,6 +5,7 @@ mod frame;
 mod input;
 mod late;
 mod scene;
+pub(super) mod storage;
 pub(in crate::application::terrain_frame::m2) use late::LatePose;
 pub(in crate::application::terrain_frame::m2) use scene::{ScenePoseExecution, ScenePoses};
 
@@ -17,9 +18,9 @@ use solarity_asset::ResourceLease;
 
 /// Only current dynamic owners retain palettes; scenery residency is not a job list.
 pub(in crate::application::terrain_frame::m2) struct PoseBatch {
-    jobs: Vec<PoseJob>,
-    indices: Vec<Option<usize>>,
-    handles: Vec<solarity_cpu::FrameJob<PoseJob>>,
+    jobs: solarity_cpu::CpuBuffer<PoseJob>,
+    indices: solarity_cpu::CpuBuffer<Option<usize>>,
+    handles: solarity_cpu::CpuBuffer<solarity_cpu::FrameJob<PoseJob>>,
     pending: solarity_cpu::FrameBatch<PoseJob>,
     calibration: solarity_cpu::CostCalibration,
     costs: solarity_cpu::CpuBuffer<solarity_cpu::JobCost>,
@@ -29,9 +30,9 @@ pub(in crate::application::terrain_frame::m2) struct PoseBatch {
 impl Default for PoseBatch {
     fn default() -> Self {
         Self {
-            jobs: Vec::new(),
-            indices: Vec::new(),
-            handles: Vec::new(),
+            jobs: solarity_cpu::CpuBuffer::default(),
+            indices: solarity_cpu::CpuBuffer::default(),
+            handles: solarity_cpu::CpuBuffer::default(),
             pending: solarity_cpu::FrameBatch::with_context(PoseJob::execute),
             calibration: solarity_cpu::CostCalibration::default(),
             costs: solarity_cpu::CpuBuffer::default(),
@@ -110,9 +111,9 @@ impl PoseBatch {
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.pending.close();
         let readiness = wait.before_reclaim(&self.pending);
-        let result = self.pending.reclaim(&mut self.jobs);
+        let result = self.pending.reclaim_into(&mut self.jobs.writer());
         self.submitted = false;
-        for job in &mut self.jobs {
+        for job in self.jobs.iter_mut() {
             self.calibration.record(&mut job.measurement);
         }
         readiness?;

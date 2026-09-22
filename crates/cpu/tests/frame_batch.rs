@@ -417,3 +417,34 @@ fn admitted_inputs_preserve_storage_through_refusal_execution_and_return()
     assert_eq!(budget.snapshot().used(Class::Frame), 0);
     Ok(())
 }
+
+#[test]
+fn admitted_slot_initialization_refuses_before_calling_the_factory() -> Result<(), CpuError> {
+    use solarity_cpu::{
+        CpuBuffer, CpuStorageBudget, CpuStorageClass as Class, CpuStorageKind as Kind,
+        CpuStoragePlan,
+    };
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(3 * size_of::<usize>(), 0, 0));
+    let mut values = CpuBuffer::default();
+    values.reserve(&budget, Class::Frame, Kind::Metadata, 3)?;
+    values.push(7_usize)?;
+    let address = values.as_ptr();
+    let calls = std::cell::Cell::new(0);
+    let make = || {
+        calls.set(calls.get() + 1);
+        11
+    };
+    assert!(values.resize_with(4, make).is_err());
+    assert_eq!(calls.get(), 0);
+    assert_eq!(&*values, &[7]);
+    values.resize_with(3, make)?;
+    assert_eq!(calls.get(), 2);
+    assert_eq!(&*values, &[7, 11, 11]);
+    values.resize_with(1, make)?;
+    assert_eq!(calls.get(), 2);
+    assert_eq!(values.as_ptr(), address);
+    assert_eq!(budget.snapshot().used(Class::Frame), 3 * size_of::<usize>());
+    drop(values);
+    assert_eq!(budget.snapshot().used(Class::Frame), 0);
+    Ok(())
+}

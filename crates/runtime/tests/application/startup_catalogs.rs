@@ -262,19 +262,36 @@ fn startup_catalog_read_pressure_is_fatal_before_decode() -> Result<(), Box<dyn 
         budget: cpu.storage().clone(),
         service: permit.service_control(),
     };
-    let snapshot = cpu.storage().snapshot();
-    let _pressure = cpu.storage().reserve(
-        CpuStorageClass::Required,
-        CpuStorageKind::Scratch,
-        snapshot.limit(CpuStorageClass::Required) - snapshot.used(CpuStorageClass::Required),
-    )?;
+    let budget = cpu.storage().clone();
+    let mut pressure = None;
+    let mut operation = prepare(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+        shared,
+        (1280, 720),
+    );
     let result = permit
-        .submit_resumable_with_context(prepare(
-            ClientDataRoot::new(fixture.data_root())?,
-            Locale::EnUs,
-            shared,
-            (1280, 720),
-        ))
+        .submit_resumable_with_context(move |context| {
+            let step = operation(context);
+            if pressure.is_none() && matches!(step, CpuTaskStep::Continue) {
+                // Discovery has admitted namespace controls. Exhaust only the remaining
+                // headroom so this fixture still reaches the first encoded table read.
+                let snapshot = budget.snapshot();
+                assert!(snapshot.bytes(CpuStorageClass::Required, CpuStorageKind::Metadata) != 0);
+                match budget.reserve(
+                    CpuStorageClass::Required,
+                    CpuStorageKind::Scratch,
+                    snapshot.limit(CpuStorageClass::Required)
+                        - snapshot.used(CpuStorageClass::Required),
+                ) {
+                    Ok(memory) => pressure = Some(memory),
+                    Err(error) => {
+                        return CpuTaskStep::Complete(Err(AssetError::from(error).into()));
+                    }
+                }
+            }
+            step
+        })
         .join()?;
     assert!(matches!(
         result,

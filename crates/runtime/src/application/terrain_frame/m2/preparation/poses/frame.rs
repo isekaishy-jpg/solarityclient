@@ -17,11 +17,17 @@ impl M2Frame {
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.pose_batch
             .finish(&mut crate::application::frame_pipeline::FrameWait::Offline)?;
+        let budget = super::storage::budget(cpu)?;
         let batch = &mut self.pose_batch;
-        for job in &batch.jobs {
+        batch.prepare_storage(
+            &budget,
+            self.placements.len(),
+            self.placement_visibility.dynamic_indices().len(),
+        )?;
+        for job in batch.jobs.iter() {
             batch.indices[job.placement()] = None;
         }
-        batch.indices.resize(self.placements.len(), None);
+        batch.indices.resize_with(self.placements.len(), || None)?;
         let mut active = 0;
         for &index in self.placement_visibility.dynamic_indices() {
             let placement = &self.placements[index];
@@ -121,7 +127,7 @@ impl M2Frame {
             if active == batch.jobs.len() {
                 batch
                     .jobs
-                    .push(PoseJob::new(ResourceLease::clone(&source.model)));
+                    .push(PoseJob::new(ResourceLease::clone(&source.model)))?;
             }
             let body_pose = animation.map(|animation| animation.body_pose());
             batch.jobs[active].prepare(
@@ -155,17 +161,11 @@ impl M2Frame {
         // Sampling owns its inputs. Main can continue WMO admission and ordered
         // traversal; a palette consumer waits for only its own model result.
         if let Some(cpu) = cpu {
-            for job in &mut batch.jobs {
+            for job in batch.jobs.iter_mut() {
                 job.admit(cpu)?;
             }
             batch.costs.clear();
-            batch.costs.reserve(
-                cpu.storage(),
-                solarity_cpu::CpuStorageClass::Frame,
-                solarity_cpu::CpuStorageKind::Metadata,
-                active,
-            )?;
-            for job in &batch.jobs {
+            for job in batch.jobs.iter() {
                 batch.costs.push(job.measurement.cost())?;
             }
             batch.pending.start_costed_graph(
@@ -178,11 +178,11 @@ impl M2Frame {
             )?;
             batch.handles.clear();
             for index in 0..active {
-                batch.handles.push(batch.pending.job(index)?);
+                batch.handles.push(batch.pending.job(index)?)?;
             }
             batch.submitted = true;
         } else {
-            for job in &mut batch.jobs {
+            for job in batch.jobs.iter_mut() {
                 job.sample();
             }
         }

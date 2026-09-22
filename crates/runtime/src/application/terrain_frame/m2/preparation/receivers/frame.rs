@@ -34,7 +34,7 @@ impl M2Frame {
         {
             self.receiver_frame.require(index);
         }
-        for &index in &self.receiver_frame.touched {
+        for &index in self.receiver_frame.touched.iter() {
             if !self.receiver_frame.needed[index] {
                 continue;
             }

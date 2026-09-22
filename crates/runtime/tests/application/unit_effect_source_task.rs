@@ -104,8 +104,18 @@ fn effect_source_storage_refusal_preserves_the_pipeline_failure() -> Result<(), 
     let fixture = unit_models::fixture_with_water_effects(17)?;
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
-    let denied = solarity_cpu::CpuStorageBudget::new(CpuStoragePlan::new(0, 0, 0));
-    catalog.model_cache_service().configure_storage(denied)?;
+    let denied = solarity_cpu::CpuStorageBudget::new(CpuStoragePlan::new(0, 1 << 20, 0));
+    catalog
+        .model_cache_service()
+        .configure_storage(denied.clone())?;
+    // Fixed namespace controls must exist before the worker can reach a refused request.
+    let snapshot = denied.snapshot();
+    let class = solarity_cpu::CpuStorageClass::Required;
+    let _pressure = denied.reserve(
+        class,
+        solarity_cpu::CpuStorageKind::Scratch,
+        snapshot.limit(class) - snapshot.used(class),
+    )?;
     let cpu = CpuExecutor::new(CpuPoolConfig::new(
         CpuExecutionPlan::new(0, 1, 1, 1)?,
         NonZeroUsize::new(3).ok_or("capacity")?,

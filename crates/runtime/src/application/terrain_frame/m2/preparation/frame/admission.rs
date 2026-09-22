@@ -834,6 +834,7 @@ impl M2Frame {
                 // ancestry inputs here; the final demand pass selects actual consumers.
                 let scene_index = if world_lighting.is_some() {
                     Some(self.receiver_frame.record(
+                        cpu.storage(),
                         placement_index,
                         self.placement_visibility.light_parent(placement_index),
                         placement.transform.w_axis.truncate(),
