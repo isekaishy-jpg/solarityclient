@@ -790,6 +790,40 @@ validation process ended during compilation without a result; the retained-artif
 rerun completed. Evidence is `target/caller-pose-scratch-tests-final.log` and
 `target/caller-pose-scratch-clippy.log`.
 
+The admission audit supersedes the preceding root-wide copied-input gap: the
+composition design requires complete connected phase storage before dispatch and
+input transfer, not a second pass before immutable inputs are copied into owned,
+already charged storage. `PoseBatch::start` plans every full/named output and uses
+`start_costed_graph_with_storage` to fund the remaining output, scheduler and
+readiness storage against those charged inputs. `ScenePoses::start_outputs` uses
+the same boundary after seeds have funded their metadata, inputs and outputs.
+The mixed full/named pose refusal fixture proves no output growth or kernel work
+when scheduler headroom is missing; the jobs and ledger survive refusal. This
+satisfies that pre-dispatch reservation requirement. It does not establish complete
+domain accounting or the remaining geometry/residency requirements.
+
+Placement-local particle and ribbon record arrays now retain their own physical
+capacity charges. Fixed slice access prevents implicit array growth; construction
+still supplies authored records before their first frame admission. Capture plans
+both arrays together with copied palette inputs before transferring simulations.
+Worker group admission includes the arrays too, preserving cross-executor
+accounting. Existing success, abandonment, failure and same-model residency swaps
+move each allocation and its unique charge together, without relocating records or
+altering simulation clocks. Nested simulation buffers remain separately charged.
+This closes outer effect-array accounting from capture onward; source creation,
+residency-wide admission and complete incrementally discovered geometry admission
+remain required. Build 177 remains installed; no additional package is requested.
+
+Validation: all 509 runtime library tests pass (30 existing ignores), including
+serial motion/visibility parity and the real capture boundary under collective
+one-byte-short admission, warm zero-headroom reuse and refused executor rebinding.
+The standalone record test verifies actual capacity, retained allocation identity,
+unchanged addresses, repeated placement/worker swaps and release after transfer.
+Final all-target/all-feature runtime Clippy with warnings denied passes after
+replacing four test-only unwraps with error propagation; production code is the
+same as in the complete test run. Formatting and diff checks pass. Evidence is
+`target/effect-records-tests.log` and `target/effect-records-clippy-final.log`.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases

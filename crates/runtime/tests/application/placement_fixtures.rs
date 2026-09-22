@@ -65,8 +65,8 @@ pub(super) fn placement(owner: M2GpuPlacementOwner) -> M2GpuPlacement {
         unit_presentation: None,
         mount_key: None,
         item_identity: None,
-        particles: Vec::new(),
-        ribbons: Vec::new(),
+        particles: Default::default(),
+        ribbons: Default::default(),
         last_effect_time_ms: 0,
         unit_effect: None,
     }

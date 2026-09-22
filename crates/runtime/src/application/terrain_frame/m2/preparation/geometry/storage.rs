@@ -126,6 +126,8 @@ impl GeometryJob {
         working_set: &mut CpuStorageWorkingSet,
     ) -> Result<OutputCounts, RuntimeTerrainFrameError> {
         let counts = self.output_counts(input, source)?;
+        self.particles.include_storage(budget, working_set)?;
+        self.ribbons.include_storage(budget, working_set)?;
         let bones = source.model.animations().bones().len();
         self.pose.include_cpu_storage(budget, bones, working_set)?;
         include(
@@ -203,6 +205,8 @@ impl GeometryJob {
         source: &M2GpuSource,
         counts: OutputCounts,
     ) -> Result<(), CpuError> {
+        self.particles.reserve_reserved(reservation)?;
+        self.ribbons.reserve_reserved(reservation)?;
         let bones = source.model.animations().bones().len();
         self.pose.reserve_cpu_storage_reserved(reservation, bones)?;
         reserve(&mut self.material_poses, reservation, counts.material_poses)?;

@@ -1,5 +1,6 @@
 //! Owned render-pose overrides are independent of ordered CPU bone samples.
 
+use super::super::super::{EffectRecords, M2ParticlePlacement, M2RibbonTrail};
 use glam::Mat4;
 use solarity_rendering::{M2AnimationClock, M2BonePoseOverrides, M2FingerPoseHands};
 
@@ -18,6 +19,10 @@ impl PaletteInput {
         &mut self,
         input: Option<M2BonePoseOverrides<'_>>,
         budget: &solarity_cpu::CpuStorageBudget,
+        effects: Option<(
+            &mut EffectRecords<M2ParticlePlacement>,
+            &mut EffectRecords<M2RibbonTrail>,
+        )>,
     ) -> Result<(), solarity_cpu::CpuError> {
         let (transforms, sequences) = input.as_ref().map_or((0, 0), |input| {
             (input.bone_transforms.len(), input.bone_sequences.len())
@@ -36,11 +41,19 @@ impl PaletteInput {
                 .reservation_bytes(budget, Class::Frame, sequences)?,
             self.sequences.replacement_credit(sequences),
         )?;
+        if let Some((particles, ribbons)) = &effects {
+            particles.include_storage(budget, &mut working_set)?;
+            ribbons.include_storage(budget, &mut working_set)?;
+        }
         let mut reservation = budget.reserve_working_set(Class::Frame, working_set.bytes())?;
         self.transforms
             .reserve_reserved(&mut reservation, Kind::Scratch, transforms)?;
         self.sequences
             .reserve_reserved(&mut reservation, Kind::Scratch, sequences)?;
+        if let Some((particles, ribbons)) = effects {
+            particles.reserve_reserved(&mut reservation)?;
+            ribbons.reserve_reserved(&mut reservation)?;
+        }
         self.pending = input.is_some();
         self.transforms.clear();
         self.sequences.clear();

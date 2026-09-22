@@ -222,6 +222,10 @@ impl GeometryBatch {
                 .storage
                 .as_ref()
                 .unwrap_or_else(|| unreachable!("geometry admission owns a storage budget")),
+            input
+                .visible
+                .is_some()
+                .then_some((&mut placement.particles, &mut placement.ribbons)),
         )?;
         batch.calibration.prepare(job, source, placement);
         let cost = job.measurement.cost();

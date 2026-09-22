@@ -21,7 +21,9 @@ use attachments::{
 mod character_residency;
 mod distance;
 mod doodad_scene;
+mod effect_records;
 mod entity_lighting;
+use effect_records::EffectRecords;
 mod frame_work;
 mod game_objects;
 mod placements;
@@ -255,8 +257,8 @@ struct M2GpuPlacement {
     /// An unchanged mount survives character atlas and equipment rebuilds.
     mount_key: Option<MountModelKey>,
     item_identity: Option<M2UnitItemIdentity>,
-    particles: Vec<M2ParticlePlacement>,
-    ribbons: Vec<M2RibbonTrail>,
+    particles: EffectRecords<M2ParticlePlacement>,
+    ribbons: EffectRecords<M2RibbonTrail>,
     /// `CM2Model +0x8c` belongs to this model lifetime, including unsampled intervals.
     last_effect_time_ms: u32,
     unit_effect: Option<unit_effects::UnitEffectPlacement>,
@@ -813,8 +815,8 @@ impl M2Frame {
                 unit_presentation: None,
                 mount_key: None,
                 item_identity: None,
-                particles,
-                ribbons,
+                particles: particles.into(),
+                ribbons: ribbons.into(),
                 // This widget model was created at its local clock origin.
                 last_effect_time_ms: 0,
                 unit_effect: None,
@@ -1747,8 +1749,8 @@ fn m2_gpu_placement(
         unit_presentation: None,
         mount_key: None,
         item_identity: None,
-        particles,
-        ribbons,
+        particles: particles.into(),
+        ribbons: ribbons.into(),
         last_effect_time_ms: scene_time_ms,
         unit_effect: None,
     })

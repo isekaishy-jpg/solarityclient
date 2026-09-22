@@ -366,8 +366,8 @@ pub(super) fn static_gpu_placement(
         unit_presentation: None,
         mount_key: None,
         item_identity: None,
-        particles,
-        ribbons,
+        particles: particles.into(),
+        ribbons: ribbons.into(),
         last_effect_time_ms: scene_time_ms as u32,
         unit_effect: None,
     })

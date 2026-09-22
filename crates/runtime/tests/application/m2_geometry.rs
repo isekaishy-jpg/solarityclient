@@ -424,6 +424,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
             100.,
         )
         .frame(1.)?;
+        assert_effect_capture_admission(&cpu, candidate)?;
         assert_worker_admission_refusal(&cpu, candidate, camera)?;
         assert_finalization_start_refusal(&cpu, candidate)?;
         assert_late_pose_connected_admission(candidate.sources[0].as_ref().ok_or("source")?)?;
@@ -845,5 +846,102 @@ fn assert_late_pose_connected_admission(source: &M2GpuSource) -> Result<(), Box<
         cpu.shutdown()?;
         assert_eq!(budget.snapshot().used(Class::Frame), baseline);
     }
+    Ok(())
+}
+
+/// The real capture boundary funds both retained arrays and copied palette inputs.
+fn assert_effect_capture_admission(
+    cpu: &CpuExecutor,
+    frame: &mut M2Frame,
+) -> Result<(), Box<dyn Error>> {
+    use super::palette::PaletteInput;
+    use solarity_cpu::{
+        CpuStorageBudget, CpuStorageClass as Class, CpuStoragePlan, CpuStorageWorkingSet,
+    };
+    let placement = frame
+        .placements
+        .iter_mut()
+        .find(|placement| !placement.particles.is_empty() && !placement.ribbons.is_empty())
+        .ok_or("fixture requires both effect record arrays")?;
+    let transforms = [(0, Mat4::IDENTITY)];
+    let sequences = [(0, M2AnimationClock::new(0, 120., 120.))];
+    let overrides = M2BonePoseOverrides {
+        bone_transforms: &transforms,
+        bone_sequences: &sequences,
+        ..Default::default()
+    };
+    let addresses = (placement.particles.as_ptr(), placement.ribbons.as_ptr());
+    let probe = CpuStorageBudget::new(CpuStoragePlan::new(usize::MAX, 0, 0));
+    let mut plan = CpuStorageWorkingSet::default();
+    placement.particles.include_storage(&probe, &mut plan)?;
+    placement.ribbons.include_storage(&probe, &mut plan)?;
+    let records = plan.bytes();
+    assert!(records > 0);
+    let required = records + size_of_val(&transforms) + size_of_val(&sequences);
+    let refused = CpuStorageBudget::new(CpuStoragePlan::new(required - 1, 0, 0));
+    let baseline = cpu.storage().snapshot().used(Class::Frame);
+    let mut palette = PaletteInput::default();
+    assert!(
+        palette
+            .prepare(
+                Some(overrides),
+                &refused,
+                Some((&mut placement.particles, &mut placement.ribbons))
+            )
+            .is_err()
+    );
+    assert_eq!(refused.snapshot().used(Class::Frame), 0);
+    assert_eq!(cpu.storage().snapshot().used(Class::Frame), baseline);
+    assert!(!palette.pending);
+    assert!(palette.overrides(&[]).bone_transforms.is_empty());
+    assert!(palette.overrides(&[]).bone_sequences.is_empty());
+    assert_eq!(
+        (placement.particles.as_ptr(), placement.ribbons.as_ptr()),
+        addresses
+    );
+
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(required, 0, 0));
+    for _ in 0..100 {
+        palette.prepare(
+            Some(overrides),
+            &budget,
+            Some((&mut placement.particles, &mut placement.ribbons)),
+        )?;
+        assert_eq!(budget.snapshot().used(Class::Frame), required);
+        assert_eq!(palette.overrides(&[]).bone_transforms, transforms);
+        assert_eq!(palette.overrides(&[]).bone_sequences, sequences);
+        assert_eq!(
+            (placement.particles.as_ptr(), placement.ribbons.as_ptr()),
+            addresses
+        );
+    }
+    assert_eq!(
+        cpu.storage().snapshot().used(Class::Frame),
+        baseline - records
+    );
+    assert!(
+        palette
+            .prepare(
+                None,
+                &refused,
+                Some((&mut placement.particles, &mut placement.ribbons))
+            )
+            .is_err()
+    );
+    assert!(
+        palette.pending,
+        "failed rebinding must preserve copied inputs"
+    );
+    assert_eq!(palette.overrides(&[]).bone_transforms, transforms);
+    assert_eq!(budget.snapshot().used(Class::Frame), required);
+    assert_eq!(refused.snapshot().used(Class::Frame), 0);
+    palette.prepare(
+        None,
+        cpu.storage(),
+        Some((&mut placement.particles, &mut placement.ribbons)),
+    )?;
+    assert_eq!(budget.snapshot().used(Class::Frame), 0);
+    drop(palette);
+    assert_eq!(cpu.storage().snapshot().used(Class::Frame), baseline);
     Ok(())
 }

@@ -1,8 +1,8 @@
 //! Per-model state crosses workers with its immutable generation and budgeted outputs.
 
 use super::super::super::{
-    M2BonePose, M2MaterialPose, M2ParticlePlacement, M2RibbonTrail, M2TransparentElement,
-    RuntimeTerrainFrameError,
+    EffectRecords, M2BonePose, M2MaterialPose, M2ParticlePlacement, M2RibbonTrail,
+    M2TransparentElement, RuntimeTerrainFrameError,
 };
 use solarity_rendering::{
     M2ParticlePreparedDraw, M2ParticleRenderVertex, M2PreparedDraw, M2RibbonPreparedDraw,
@@ -25,8 +25,8 @@ pub(super) struct GeometryJob {
     pub(super) pose: M2BonePose,
     pub(super) palette: super::palette::PaletteInput,
     pub(super) material_poses: solarity_cpu::CpuBuffer<Option<M2MaterialPose>>,
-    pub(super) particles: Vec<M2ParticlePlacement>,
-    pub(super) ribbons: Vec<M2RibbonTrail>,
+    pub(super) particles: EffectRecords<M2ParticlePlacement>,
+    pub(super) ribbons: EffectRecords<M2RibbonTrail>,
     pub(super) shadow_draws: solarity_cpu::CpuBuffer<M2PreparedDraw>,
     pub(super) visible_draws: solarity_cpu::CpuBuffer<M2PreparedDraw>,
     pub(super) transparent_elements: solarity_cpu::CpuBuffer<M2TransparentElement>,
