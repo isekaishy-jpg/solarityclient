@@ -19,6 +19,14 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected cutover changes
 
+[Testing Build 177](testing-build177-cpu-storage.md) is now installed from
+`d1e90f30`, packaging the accumulated source work below through connected pose
+inputs and collective pose outputs. Its identity/hash and Desktop shortcut are
+verified. The local playerbots realm is ready. Stale debug output cleanup recovered
+28.38 GiB; 19.28 GiB of current debug artifacts remain. The user explicitly requested
+this package, superseding the earlier source-only packaging restriction for this
+turn. The full cutover requirements remain open.
+
 [Testing Build 176](testing-build176-texture-sources.md) packages the completed
 texture-source and appearance/backdrop batches at `ff9751b1`. Its installed
 identity and artifact hash are verified. The user authorized this one fresh
