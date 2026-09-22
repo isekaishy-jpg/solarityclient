@@ -279,13 +279,37 @@ impl PoseJob {
         overrides: M2BonePoseOverrides<'_>,
         fund: &mut CpuStorageReservation,
     ) -> Result<(), CpuError> {
+        self.prepare_iter_reserved(
+            placement,
+            source,
+            clock,
+            view,
+            overrides.finger_pose,
+            overrides.bone_transforms,
+            overrides.bone_sequences.iter().copied(),
+            fund,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn prepare_iter_reserved(
+        &mut self,
+        placement: usize,
+        source: &M2GpuSource,
+        clock: M2AnimationClock,
+        view: Mat4,
+        fingers: Option<(M2AnimationClock, M2FingerPoseHands)>,
+        transforms: &[(u16, Mat4)],
+        sequences: impl Iterator<Item = (u16, M2AnimationClock)>,
+        fund: &mut CpuStorageReservation,
+    ) -> Result<(), CpuError> {
         self.prepare_inputs_reserved(
             fund,
             &source.model_oriented_billboard_bones,
-            overrides.bone_transforms,
-            overrides.bone_sequences.iter().copied(),
+            transforms,
+            sequences,
         )?;
-        self.select(placement, source, clock, view, overrides.finger_pose);
+        self.select(placement, source, clock, view, fingers);
         Ok(())
     }
 
@@ -298,11 +322,31 @@ impl PoseJob {
         requested: Option<&[usize]>,
         plan: &mut CpuStorageWorkingSet,
     ) -> Result<(), CpuError> {
+        self.include_preparation_counts(
+            budget,
+            source,
+            overrides.bone_transforms.len(),
+            overrides.bone_sequences.len(),
+            requested,
+            plan,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn include_preparation_counts(
+        &self,
+        budget: &CpuStorageBudget,
+        source: &M2GpuSource,
+        transforms: usize,
+        sequences: usize,
+        requested: Option<&[usize]>,
+        plan: &mut CpuStorageWorkingSet,
+    ) -> Result<(), CpuError> {
         self.include_inputs(
             budget,
             source.model_oriented_billboard_bones.len(),
-            overrides.bone_transforms.len(),
-            overrides.bone_sequences.len(),
+            transforms,
+            sequences,
             plan,
         )?;
         let same = self.retains_layout(source);

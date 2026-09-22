@@ -1,6 +1,8 @@
 //! Callback samples are computed independently; their ordered owner selects exact results.
 
 use super::super::super::{M2GpuSource, RuntimeTerrainFrameError};
+mod storage;
+
 use super::input::PoseJob;
 use crate::application::frame_pipeline::FrameWait;
 use solarity_cpu::{
@@ -91,55 +93,6 @@ impl Default for ScenePoses {
 }
 
 impl ScenePoses {
-    pub(in crate::application::terrain_frame::m2) fn prepare_storage(
-        &mut self,
-        budget: &CpuStorageBudget,
-        slots: usize,
-        jobs: usize,
-    ) -> Result<(), CpuError> {
-        let slots = slots.max(self.cache.len());
-        let cache = super::storage::capacity(&self.cache, slots)?;
-        let indices = super::storage::capacity(&self.indices, slots)?;
-        let jobs = super::storage::capacity(&self.jobs, jobs)?;
-        let handles = super::storage::capacity(&self.handles, jobs)?;
-        let mut plan = CpuStorageWorkingSet::default();
-        plan.include(
-            self.cache.reservation_bytes(budget, Class::Frame, cache)?,
-            self.cache.replacement_credit(cache),
-        )?;
-        plan.include(
-            self.indices
-                .reservation_bytes(budget, Class::Frame, indices)?,
-            self.indices.replacement_credit(indices),
-        )?;
-        plan.include(
-            self.jobs.reservation_bytes(budget, Class::Frame, jobs)?,
-            self.jobs.replacement_credit(jobs),
-        )?;
-        plan.include(
-            self.handles
-                .reservation_bytes(budget, Class::Frame, handles)?,
-            self.handles.replacement_credit(handles),
-        )?;
-        plan.include(
-            self.late_jobs.reservation_bytes(budget, Class::Frame, 1)?,
-            self.late_jobs.replacement_credit(1),
-        )?;
-        let mut fund = budget.reserve_working_set(Class::Frame, plan.bytes())?;
-        self.cache
-            .reserve_reserved(&mut fund, Kind::Result, cache)?;
-        self.indices
-            .reserve_reserved(&mut fund, Kind::Metadata, indices)?;
-        self.jobs.reserve_reserved(&mut fund, Kind::Result, jobs)?;
-        self.handles
-            .reserve_reserved(&mut fund, Kind::Metadata, handles)?;
-        self.late_jobs
-            .reserve_reserved(&mut fund, Kind::Result, 1)?;
-        self.cache.resize_with(slots, || None)?;
-        self.indices.resize_with(slots, || None)?;
-        Ok(())
-    }
-
     /// Retained scratch follows a live model layout, not an old traversal ordinal.
     pub(in crate::application::terrain_frame::m2) fn retain_layouts(
         &mut self,
@@ -172,11 +125,6 @@ impl ScenePoses {
         overrides: M2BonePoseOverrides<'_>,
         output: &mut solarity_rendering::M2BonePose,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        self.prepare_storage(
-            cpu.storage(),
-            index.checked_add(1).ok_or(CpuError::StorageSizeOverflow)?,
-            self.jobs.len(),
-        )?;
         if self.active
             && let Some(slot) = self.indices.get_mut(index).and_then(Option::take)
         {
@@ -185,7 +133,7 @@ impl ScenePoses {
                 .pending
                 .with_result(&self.handles[slot], Option::take)?;
         }
-        if let Some(job) = self.cache[index].as_mut()
+        if let Some(job) = self.cache.get_mut(index).and_then(Option::as_mut)
             && job.take(&source.model, clock, view, overrides, output)?
         {
             #[cfg(test)]
@@ -195,21 +143,7 @@ impl ScenePoses {
             }
             return Ok(());
         }
-        let mut job = self.cache[index]
-            .take()
-            .unwrap_or_else(|| PoseJob::new(source.model.clone()));
-        job.prepare(
-            index,
-            source,
-            clock,
-            view,
-            overrides.finger_pose,
-            overrides.bone_transforms,
-            overrides.bone_sequences.iter().copied(),
-            cpu.storage(),
-        )?;
-        self.late_jobs.push(Some(job))?;
-        start_outputs(cpu, &mut self.late, &mut self.late_jobs)?;
+        self.start_late(cpu, index, source, clock, view, overrides, None)?;
         let readiness = wait.before_reclaim(&self.late);
         let result = self.late.reclaim_into(&mut self.late_jobs.writer());
         self.cache[index] = self.late_jobs.pop().flatten();
@@ -239,7 +173,16 @@ impl ScenePoses {
         overrides: M2BonePoseOverrides<'_>,
         bones: &[usize],
     ) -> Result<(), RuntimeTerrainFrameError> {
-        self.seed_job(cpu, index, source, clock, view, overrides, Some(bones))
+        self.seed_job(
+            cpu,
+            index,
+            source,
+            clock,
+            view,
+            overrides,
+            Some(bones),
+            overrides.bone_sequences.iter().copied(),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -252,15 +195,25 @@ impl ScenePoses {
         view: glam::Mat4,
         overrides: M2BonePoseOverrides<'_>,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        self.seed_job(cpu, index, source, clock, view, overrides, None)
+        self.seed_job(
+            cpu,
+            index,
+            source,
+            clock,
+            view,
+            overrides,
+            None,
+            overrides.bone_sequences.iter().copied(),
+        )
     }
 
     pub(in crate::application::terrain_frame::m2) fn seeded(&self, index: usize) -> bool {
         self.indices.get(index).is_some_and(Option::is_some)
     }
 
+    /// Playback clocks copy directly into admitted input storage without a temporary Vec.
     #[allow(clippy::too_many_arguments)]
-    fn seed_job(
+    pub(in crate::application::terrain_frame::m2) fn seed_sequences(
         &mut self,
         cpu: &CpuExecutor,
         index: usize,
@@ -268,36 +221,19 @@ impl ScenePoses {
         clock: M2AnimationClock,
         view: glam::Mat4,
         overrides: M2BonePoseOverrides<'_>,
-        bones: Option<&[usize]>,
+        bones: &[usize],
+        sequences: impl Iterator<Item = (u16, M2AnimationClock)>,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        debug_assert!(!self.active);
-        self.prepare_storage(
-            cpu.storage(),
-            index.checked_add(1).ok_or(CpuError::StorageSizeOverflow)?,
-            self.jobs
-                .len()
-                .checked_add(1)
-                .ok_or(CpuError::StorageSizeOverflow)?,
-        )?;
-        let mut job = self.cache[index]
-            .take()
-            .unwrap_or_else(|| PoseJob::new(source.model.clone()));
-        job.prepare(
+        self.seed_job(
+            cpu,
             index,
             source,
             clock,
             view,
-            overrides.finger_pose,
-            overrides.bone_transforms,
-            overrides.bone_sequences.iter().copied(),
-            cpu.storage(),
-        )?;
-        if let Some(bones) = bones {
-            job.request_samples(bones, cpu.storage())?;
-        }
-        self.indices[index] = Some(self.jobs.len());
-        self.jobs.push(Some(job))?;
-        Ok(())
+            overrides,
+            Some(bones),
+            sequences,
+        )
     }
 
     pub(in crate::application::terrain_frame::m2) fn start(
@@ -355,12 +291,6 @@ impl ScenePoses {
         overrides: M2BonePoseOverrides<'_>,
         bones: &[usize],
     ) -> Result<&M2BoneSamples, RuntimeTerrainFrameError> {
-        let budget = super::storage::budget(cpu)?;
-        self.prepare_storage(
-            &budget,
-            index.checked_add(1).ok_or(CpuError::StorageSizeOverflow)?,
-            self.jobs.len(),
-        )?;
         if self.active
             && let Some(slot) = self.indices.get_mut(index).and_then(Option::take)
         {
@@ -369,37 +299,43 @@ impl ScenePoses {
                 .pending
                 .with_result(&self.handles[slot], Option::take)?;
         }
-        let matching = self.cache[index]
-            .as_ref()
+        let matching = self
+            .cache
+            .get(index)
+            .and_then(Option::as_ref)
             .is_some_and(|job| job.matches_samples(&source.model, clock, view, overrides, bones));
         if !matching {
             #[cfg(test)]
             {
                 self.misses += 1;
             }
-            let mut job = self.cache[index]
-                .take()
-                .unwrap_or_else(|| PoseJob::new(source.model.clone()));
-            job.prepare(
-                index,
-                source,
-                clock,
-                view,
-                overrides.finger_pose,
-                overrides.bone_transforms,
-                overrides.bone_sequences.iter().copied(),
-                &budget,
-            )?;
             if let Some(cpu) = cpu {
-                job.request_samples(bones, cpu.storage())?;
-                self.late_jobs.push(Some(job))?;
-                start_outputs(cpu, &mut self.late, &mut self.late_jobs)?;
+                self.start_late(cpu, index, source, clock, view, overrides, Some(bones))?;
                 let readiness = wait.before_reclaim(&self.late);
                 let result = self.late.reclaim_into(&mut self.late_jobs.writer());
                 self.cache[index] = self.late_jobs.pop().flatten();
                 readiness?;
                 result?;
             } else {
+                let budget = super::storage::budget(cpu)?;
+                self.prepare_storage(
+                    &budget,
+                    index.checked_add(1).ok_or(CpuError::StorageSizeOverflow)?,
+                    self.jobs.len(),
+                )?;
+                let mut job = self.cache[index]
+                    .take()
+                    .unwrap_or_else(|| PoseJob::new(source.model.clone()));
+                job.prepare(
+                    index,
+                    source,
+                    clock,
+                    view,
+                    overrides.finger_pose,
+                    overrides.bone_transforms,
+                    overrides.bone_sequences.iter().copied(),
+                    &budget,
+                )?;
                 job.sample_unadmitted(bones);
                 self.cache[index] = Some(job);
             }

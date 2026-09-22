@@ -735,6 +735,33 @@ denied, formatting and diff checks pass. Logs are
 `target/incremental-admission-runtime-final.log` and
 `target/incremental-admission-clippy.log`.
 
+Scene-pose cache misses now connect vehicle palette and callback named-bone input
+preparation to scheduler admission. One protected reservation covers metadata,
+copied orientation/transforms/sequence clocks, requested bones and full/sparse
+output. The cached owner stays in its slot until preparation succeeds; refusal
+no longer takes and drops its reusable buffers. Existing ready results are consumed
+at their ordered boundary, with native servicing and normal phase reclamation.
+
+Seeded callback requests likewise reserve their metadata, copied inputs and output
+together before replacing the cached values. Their existing collective scheduler
+publication still follows seeding; this is not a whole multi-model phase envelope.
+Callback seeding now copies the bounded playback-clock iterator directly into
+admitted job storage, removing its temporary sequence-clock Vec. Source-generation
+replacement, exact input matching, named-bone supersets and independent serial
+fixture behavior remain intact. Root-wide copied-input admission, a complete
+reservation spanning incrementally discovered geometry, caller playback/demand
+scratch and the other residency/accounting requirements remain open. Build 177
+remains installed; this source batch does not complete the cutover.
+
+Validation: all 505 runtime library tests pass (30 existing ignores). The real-source
+moving-scene fixture additionally verifies cold scene-miss refusal one byte below
+the complete requirement, no metadata growth on refusal, warm full/sparse misses
+under zero remaining byte headroom, cached-owner survival after a refused larger
+request, seeded-request refusal and exact iterator-input cache hits. Native palette
+and named-bone results match serial preparation. Runtime all-target/all-feature
+Clippy with warnings denied, formatting and diff checks pass. Evidence is
+`target/scene-pose-admission-tests.log` and `target/scene-pose-admission-clippy.log`.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases

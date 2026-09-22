@@ -56,8 +56,7 @@ impl M2Frame {
                 .unit_animation
                 .as_ref()
                 .map(|animation| animation.body_pose());
-            let sequences = playback.bone_sequence_clocks(&source.model, clock, now as u32);
-            self.scene_poses.seed(
+            self.scene_poses.seed_sequences(
                 cpu,
                 index,
                 source,
@@ -66,10 +65,10 @@ impl M2Frame {
                 M2BonePoseOverrides {
                     model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
                     bone_transforms: body.as_ref().map_or(&[], |body| body.bone_transforms()),
-                    bone_sequences: &sequences,
                     ..Default::default()
                 },
                 self.bone_demand.bones(),
+                playback.bone_sequence_clock_iter(&source.model, clock, now as u32),
             )?;
         }
         self.scene_poses.start(cpu)

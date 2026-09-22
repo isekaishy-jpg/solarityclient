@@ -427,6 +427,9 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         assert_worker_admission_refusal(&cpu, candidate, camera)?;
         assert_finalization_start_refusal(&cpu, candidate)?;
         assert_late_pose_connected_admission(candidate.sources[0].as_ref().ok_or("source")?)?;
+        super::super::poses::ScenePoses::assert_connected_admission(
+            candidate.sources[0].as_ref().ok_or("source")?,
+        )?;
         let mut abandoned = candidate.begin_visible_draws_with_unit_effects(
             &renderer,
             &cpu,
