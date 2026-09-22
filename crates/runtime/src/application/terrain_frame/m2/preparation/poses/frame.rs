@@ -162,24 +162,7 @@ impl M2Frame {
         // Sampling owns its inputs. Main can continue WMO admission and ordered
         // traversal; a palette consumer waits for only its own model result.
         if let Some(cpu) = cpu {
-            batch.admit_outputs(cpu.storage())?;
-            batch.costs.clear();
-            for job in batch.jobs.iter() {
-                batch.costs.push(job.measurement.cost())?;
-            }
-            batch.pending.start_costed_graph(
-                cpu,
-                &solarity_cpu::FrameGraphTemplate::independent(active)
-                    .with_priority(solarity_cpu::FramePriority::Prerequisite),
-                &mut batch.jobs,
-                &[],
-                &batch.costs,
-            )?;
-            batch.handles.clear();
-            for index in 0..active {
-                batch.handles.push(batch.pending.job(index)?)?;
-            }
-            batch.submitted = true;
+            batch.start(cpu)?;
         } else {
             for job in batch.jobs.iter_mut() {
                 job.sample();

@@ -1,7 +1,10 @@
 //! Bounded readiness subscriptions; payload ownership stays with the domain.
 
 use crate::storage::StorageVec;
-use crate::{CpuError, CpuStorageBudget, CpuStorageClass, CpuStorageKind, JobOutcome};
+use crate::{
+    CpuError, CpuStorageBudget, CpuStorageClass, CpuStorageKind, CpuStorageReservation,
+    CpuStorageWorkingSet, JobOutcome,
+};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 /// Internal metadata delivery only. Implementations enqueue work and never run
@@ -143,6 +146,46 @@ impl CompletionPort {
         budget: &CpuStorageBudget,
         class: CpuStorageClass,
     ) -> Result<ReadyToken, CpuError> {
+        let mut working_set = CpuStorageWorkingSet::default();
+        self.include_storage(subscribers, budget, class, &mut working_set)?;
+        let mut reservation = budget.reserve_working_set(class, working_set.bytes())?;
+        self.begin_reserved(subscribers, &mut reservation)
+    }
+
+    /// Batch admission includes readiness records before any scheduler buffer grows.
+    pub(crate) fn include_storage(
+        &self,
+        subscribers: usize,
+        budget: &CpuStorageBudget,
+        class: CpuStorageClass,
+        working_set: &mut CpuStorageWorkingSet,
+    ) -> Result<(), CpuError> {
+        let state = self.core.lock();
+        if state.generation != 0
+            && (state.outcome.is_none() || state.publishing || state.subscribers != 0)
+        {
+            return Err(CpuError::ReadinessActive);
+        }
+        state
+            .generation
+            .checked_add(1)
+            .ok_or(CpuError::EpochExhausted)?;
+        working_set.include(
+            state.slots.reservation_bytes(budget, class, subscribers)?,
+            state.slots.replacement_credit(subscribers),
+        )?;
+        working_set.include(
+            state.bound.reservation_bytes(budget, class, subscribers)?,
+            state.bound.replacement_credit(subscribers),
+        )
+    }
+
+    /// Activates a serialized owner using its protected connected reservation.
+    pub(crate) fn begin_reserved(
+        &self,
+        subscribers: usize,
+        reservation: &mut CpuStorageReservation,
+    ) -> Result<ReadyToken, CpuError> {
         let mut state = self.core.lock();
         if state.generation != 0
             && (state.outcome.is_none() || state.publishing || state.subscribers != 0)
@@ -155,10 +198,10 @@ impl CompletionPort {
             .ok_or(CpuError::EpochExhausted)?;
         state
             .slots
-            .reserve(budget, class, CpuStorageKind::Metadata, subscribers)?;
+            .reserve_reserved(reservation, CpuStorageKind::Metadata, subscribers)?;
         state
             .bound
-            .reserve(budget, class, CpuStorageKind::Metadata, subscribers)?;
+            .reserve_reserved(reservation, CpuStorageKind::Metadata, subscribers)?;
         state.slots.resize_with(subscribers, || Slot {
             serial: 0,
             reserved: false,

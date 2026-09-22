@@ -441,35 +441,55 @@ fn pose_input_admission_preserves_prior_values_and_warm_allocations() -> Result<
 }
 
 #[test]
-fn pose_phase_admission_protects_full_and_named_outputs_together() -> Result<(), Box<dyn Error>> {
-    use solarity_cpu::CpuStoragePlan;
+fn pose_phase_admission_protects_full_named_and_scheduler_outputs_together()
+-> Result<(), Box<dyn Error>> {
+    let mut cpu = executor()?;
+    let budget = cpu.storage().clone();
+    let baseline = budget.snapshot().used(Class::Frame);
     let model = model()?;
     let full = PoseJob::new(model.clone());
     let mut named = PoseJob::new(model);
-    named.sparse = true;
-    let probe = CpuStorageBudget::new(CpuStoragePlan::new(0, 0, 0));
-    let mut plan = CpuStorageWorkingSet::default();
-    full.include_output(&probe, &mut plan)?;
-    named.include_output(&probe, &mut plan)?;
-    let outputs = plan.bytes();
-    let staging = 2 * size_of::<PoseJob>();
-    let budget = CpuStorageBudget::new(CpuStoragePlan::new(staging + outputs, 0, 0));
+    named.request_samples(&[0], &budget)?;
+    let mut outputs = CpuStorageWorkingSet::default();
+    full.include_output(&budget, &mut outputs)?;
+    named.include_output(&budget, &mut outputs)?;
     let mut batch = super::super::PoseBatch::default();
-    batch.jobs.reserve(&budget, Class::Frame, Kind::Result, 2)?;
+    batch.prepare_storage(&budget, 2, 2)?;
     batch.jobs.push(full)?;
     batch.jobs.push(named)?;
-    let pressure = budget.reserve(Class::Frame, Kind::Scratch, 1)?;
-    assert!(batch.admit_outputs(&budget).is_err());
+    let used = budget.snapshot().used(Class::Frame);
+    // Domain outputs alone fit; scheduler cells/readiness must join the same admission.
+    let pressure = budget.reserve(
+        Class::Frame,
+        Kind::Scratch,
+        budget.snapshot().limit(Class::Frame) - used - outputs.bytes(),
+    )?;
+    let held = budget.snapshot().used(Class::Frame);
+    assert!(matches!(
+        batch.start(&cpu),
+        Err(CpuError::StorageAtCapacity { .. })
+    ));
+    assert_eq!(batch.jobs.len(), 2);
     assert_eq!(batch.jobs[0].pose.allocated_bytes(), 0);
     assert_eq!(batch.jobs[1].samples.allocated_bytes(), 0);
-    assert_eq!(budget.snapshot().used(Class::Frame), staging + 1);
+    assert_eq!(budget.snapshot().used(Class::Frame), held);
     drop(pressure);
-    batch.admit_outputs(&budget)?;
-    assert_eq!(budget.snapshot().used(Class::Frame), staging + outputs);
+    batch.start(&cpu)?;
+    batch.finish(&mut crate::application::frame_pipeline::FrameWait::Offline)?;
+    let warm = budget.snapshot().used(Class::Frame);
     let full_address = batch.jobs[0].pose.transforms().as_ptr();
-    batch.admit_outputs(&budget)?;
+    assert!(batch.jobs[0].pose.allocated_bytes() > 0);
+    assert!(batch.jobs[1].samples.allocated_bytes() > 0);
+    let pressure = budget.reserve(
+        Class::Frame,
+        Kind::Scratch,
+        budget.snapshot().limit(Class::Frame) - warm,
+    )?;
+    batch.start(&cpu)?;
+    batch.finish(&mut crate::application::frame_pipeline::FrameWait::Offline)?;
     assert_eq!(batch.jobs[0].pose.transforms().as_ptr(), full_address);
-    drop(batch);
-    assert_eq!(budget.snapshot().used(Class::Frame), 0);
+    drop((batch, pressure));
+    cpu.shutdown()?;
+    assert_eq!(budget.snapshot().used(Class::Frame), baseline);
     Ok(())
 }

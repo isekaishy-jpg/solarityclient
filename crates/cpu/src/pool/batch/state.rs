@@ -8,7 +8,9 @@ use crate::pool::observation::ObservedGuard;
 use crate::pool::worker::WorkerLease;
 use crate::storage::{StorageDeque, StorageVec};
 use crate::{CompletionPort, CoordinatorNotifier, CpuError, ReadyToken};
-use crate::{CpuStorageBudget, CpuStorageClass, CpuStorageKind};
+use crate::{
+    CpuStorageBudget, CpuStorageClass, CpuStorageKind, CpuStorageReservation, CpuStorageWorkingSet,
+};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -137,31 +139,76 @@ impl<T> State<T> {
             drain_tail: super::diagnostics::DrainTail::default(),
         }
     }
-    /// Reserves all metadata and propagation storage. Nested T allocations remain
-    /// domain-owned; this reservation makes no claim about their byte budget.
-    pub fn reserve(
-        &mut self,
+    /// Plans scheduler storage in the same allocation order used during funding.
+    pub fn include_storage(
+        &self,
         plan: FrameBatchPlan,
         dependencies: usize,
         budget: &CpuStorageBudget,
         class: CpuStorageClass,
+        working_set: &mut CpuStorageWorkingSet,
+    ) -> Result<(), CpuError> {
+        working_set.include(
+            self.jobs.reservation_bytes(budget, class, plan.jobs)?,
+            self.jobs.replacement_credit(plan.jobs),
+        )?;
+        working_set.include(
+            self.nodes.reservation_bytes(budget, class, plan.jobs)?,
+            self.nodes.replacement_credit(plan.jobs),
+        )?;
+        if self.kernel.uses_context() {
+            working_set.include(
+                self.cancellation
+                    .reservation_bytes(budget, class, plan.jobs)?,
+                self.cancellation.replacement_credit(plan.jobs),
+            )?;
+        }
+        working_set.include(
+            self.edges.reservation_bytes(budget, class, plan.edges)?,
+            self.edges.replacement_credit(plan.edges),
+        )?;
+        working_set.include(
+            self.propagation
+                .reservation_bytes(budget, class, plan.jobs)?,
+            self.propagation.replacement_credit(plan.jobs),
+        )?;
+        working_set.include(
+            self.dependencies
+                .reservation_bytes(budget, class, dependencies)?,
+            self.dependencies.replacement_credit(dependencies),
+        )?;
+        working_set.include(
+            self.subscriptions
+                .reservation_bytes(budget, class, dependencies)?,
+            self.subscriptions.replacement_credit(dependencies),
+        )?;
+        Ok(())
+    }
+
+    /// Consumes protected phase bytes before any input can enter the scheduler.
+    pub fn reserve_reserved(
+        &mut self,
+        plan: FrameBatchPlan,
+        dependencies: usize,
+        reservation: &mut CpuStorageReservation,
     ) -> Result<(), CpuError> {
         let kind = CpuStorageKind::Metadata;
-        self.jobs.reserve(budget, class, kind, plan.jobs)?;
-        self.nodes.reserve(budget, class, kind, plan.jobs)?;
+        self.jobs.reserve_reserved(reservation, kind, plan.jobs)?;
+        self.nodes.reserve_reserved(reservation, kind, plan.jobs)?;
         if self.kernel.uses_context() {
             let cancellation = Arc::get_mut(&mut self.cancellation).unwrap_or_else(|| {
                 unreachable!("prior kernels release context before epoch reclamation")
             });
-            cancellation.reserve(budget, class, kind, plan.jobs)?;
+            cancellation.reserve_reserved(reservation, kind, plan.jobs)?;
             cancellation.resize_with(plan.jobs, || AtomicBool::new(false));
         }
-        self.edges.reserve(budget, class, kind, plan.edges)?;
-        self.propagation.reserve(budget, class, kind, plan.jobs)?;
+        self.edges.reserve_reserved(reservation, kind, plan.edges)?;
+        self.propagation
+            .reserve_reserved(reservation, kind, plan.jobs)?;
         self.dependencies
-            .reserve(budget, class, kind, dependencies)?;
+            .reserve_reserved(reservation, kind, dependencies)?;
         self.subscriptions
-            .reserve(budget, class, kind, dependencies)?;
+            .reserve_reserved(reservation, kind, dependencies)?;
         Ok(())
     }
     /// Registers validated parents and atomically observes any terminal outcome.

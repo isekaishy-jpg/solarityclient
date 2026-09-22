@@ -226,6 +226,63 @@ impl<T> StorageDeque<T> {
         self.memory = Some(memory);
         Ok(())
     }
+    /// Plans complete adoption/replacement demand without changing retained values.
+    pub(crate) fn reservation_bytes(
+        &self,
+        budget: &CpuStorageBudget,
+        class: CpuStorageClass,
+        capacity: usize,
+    ) -> Result<usize, CpuError> {
+        let adoption = self
+            .memory
+            .as_ref()
+            .map_or(0, |memory| memory.admission_bytes(budget, class));
+        let replacement = if capacity > self.values.capacity() {
+            bytes::<T>(capacity)?
+        } else {
+            0
+        };
+        adoption
+            .checked_add(replacement)
+            .ok_or(CpuError::StorageSizeOverflow)
+    }
+
+    /// A replacement frees this old allocation after its values have moved.
+    pub(crate) fn replacement_credit(&self, capacity: usize) -> usize {
+        if capacity > self.values.capacity() {
+            self.memory.as_ref().map_or(0, ByteReservation::bytes)
+        } else {
+            0
+        }
+    }
+
+    /// Uses a phase reservation instead of independently competing for class headroom.
+    pub(crate) fn reserve_reserved(
+        &mut self,
+        reservation: &mut CpuStorageReservation,
+        kind: CpuStorageKind,
+        capacity: usize,
+    ) -> Result<(), CpuError> {
+        if let Some(memory) = &mut self.memory {
+            memory.transfer_reserved(reservation, kind)?;
+        }
+        if capacity <= self.values.capacity() {
+            return Ok(());
+        }
+        let mut memory = reservation.reserve(kind, bytes::<T>(capacity)?)?;
+        let mut replacement = VecDeque::new();
+        replacement
+            .try_reserve_exact(capacity)
+            .map_err(|_| CpuError::StorageAllocation)?;
+        memory.resize_reserved(reservation, bytes::<T>(replacement.capacity())?)?;
+        replacement.extend(self.values.drain(..));
+        drop(std::mem::replace(&mut self.values, replacement));
+        if let Some(retired) = self.memory.replace(memory) {
+            reservation.recycle(retired)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.values.len()
     }

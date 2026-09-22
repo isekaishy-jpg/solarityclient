@@ -43,6 +43,32 @@ fn execute(
         .execute(context)
 }
 
+/// Scheduler cells and every known pose output share one protected admission.
+fn start_outputs(
+    cpu: &CpuExecutor,
+    pending: &mut FrameBatch<Option<PoseJob>>,
+    jobs: &mut CpuBuffer<Option<PoseJob>>,
+) -> Result<(), CpuError> {
+    let mut outputs = CpuStorageWorkingSet::default();
+    for job in jobs.iter().flatten() {
+        job.include_output(cpu.storage(), &mut outputs)?;
+    }
+    pending.start_costed_graph_with_storage(
+        cpu,
+        &FrameGraphTemplate::independent(jobs.len()).with_priority(FramePriority::Prerequisite),
+        jobs,
+        &[],
+        &[],
+        outputs.bytes(),
+        |jobs, fund| {
+            for job in jobs.iter_mut().flatten() {
+                job.admit_output(fund)?;
+            }
+            Ok(())
+        },
+    )
+}
+
 impl Default for ScenePoses {
     fn default() -> Self {
         Self {
@@ -182,14 +208,8 @@ impl ScenePoses {
             overrides.bone_sequences.iter().copied(),
             cpu.storage(),
         )?;
-        job.admit(cpu)?;
         self.late_jobs.push(Some(job))?;
-        self.late.start_graph(
-            cpu,
-            &FrameGraphTemplate::independent(1).with_priority(FramePriority::Prerequisite),
-            &mut self.late_jobs,
-            &[],
-        )?;
+        start_outputs(cpu, &mut self.late, &mut self.late_jobs)?;
         let readiness = wait.before_reclaim(&self.late);
         let result = self.late.reclaim_into(&mut self.late_jobs.writer());
         self.cache[index] = self.late_jobs.pop().flatten();
@@ -288,25 +308,7 @@ impl ScenePoses {
         if count == 0 {
             return Ok(());
         }
-        let mut plan = CpuStorageWorkingSet::default();
-        for job in self.jobs.iter().flatten() {
-            job.include_output(cpu.storage(), &mut plan)?;
-        }
-        let mut fund = cpu
-            .storage()
-            .reserve_working_set(Class::Frame, plan.bytes())?;
-        for job in self.jobs.iter_mut().flatten() {
-            job.admit_output(&mut fund)?;
-        }
-        drop(fund);
-        self.pending.start_costed_graph(
-            cpu,
-            &FrameGraphTemplate::independent(self.jobs.len())
-                .with_priority(FramePriority::Prerequisite),
-            &mut self.jobs,
-            &[],
-            &[],
-        )?;
+        start_outputs(cpu, &mut self.pending, &mut self.jobs)?;
         self.active = true;
         self.handles.clear();
         for index in 0..count {
@@ -390,15 +392,8 @@ impl ScenePoses {
             )?;
             if let Some(cpu) = cpu {
                 job.request_samples(bones, cpu.storage())?;
-                job.admit(cpu)?;
                 self.late_jobs.push(Some(job))?;
-                self.late.start_costed_graph(
-                    cpu,
-                    &FrameGraphTemplate::independent(1).with_priority(FramePriority::Prerequisite),
-                    &mut self.late_jobs,
-                    &[],
-                    &[],
-                )?;
+                start_outputs(cpu, &mut self.late, &mut self.late_jobs)?;
                 let readiness = wait.before_reclaim(&self.late);
                 let result = self.late.reclaim_into(&mut self.late_jobs.writer());
                 self.cache[index] = self.late_jobs.pop().flatten();

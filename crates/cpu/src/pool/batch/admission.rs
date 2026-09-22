@@ -3,7 +3,7 @@
 use super::state::Gate;
 use super::{FrameBatch, FrameBatchPlan, FramePriority};
 use crate::completion::PrioritySink;
-use crate::{CpuError, CpuExecutor, ReadyToken};
+use crate::{CpuError, CpuExecutor, CpuStorageReservation, CpuStorageWorkingSet, ReadyToken};
 use std::sync::Arc;
 
 impl<T: Send + 'static> FrameBatch<T> {
@@ -16,6 +16,19 @@ impl<T: Send + 'static> FrameBatch<T> {
         plan: FrameBatchPlan,
         dependencies: &[ReadyToken],
     ) -> Result<(), CpuError> {
+        self.begin_connected(cpu, plan, dependencies, 0, true)
+            .map(|_| ())
+    }
+
+    /// Domain bytes remain protected after scheduler allocation and until input binding.
+    pub(super) fn begin_connected(
+        &mut self,
+        cpu: &CpuExecutor,
+        plan: FrameBatchPlan,
+        dependencies: &[ReadyToken],
+        domain_bytes: usize,
+        promote: bool,
+    ) -> Result<CpuStorageReservation, CpuError> {
         if self.active {
             return Err(CpuError::BatchActive);
         }
@@ -54,7 +67,25 @@ impl<T: Send + 'static> FrameBatch<T> {
             .generation
             .checked_add(1)
             .ok_or(CpuError::EpochExhausted)?;
-        state.reserve(plan, dependencies.len(), cpu.storage(), class)?;
+        let mut working_set = CpuStorageWorkingSet::default();
+        state.include_storage(
+            plan,
+            dependencies.len(),
+            cpu.storage(),
+            class,
+            &mut working_set,
+        )?;
+        self.core.completion_port.include_storage(
+            cpu.completion_capacity,
+            cpu.storage(),
+            class,
+            &mut working_set,
+        )?;
+        working_set.include(domain_bytes, 0)?;
+        let mut reservation = cpu
+            .storage()
+            .reserve_working_set(class, working_set.bytes())?;
+        state.reserve_reserved(plan, dependencies.len(), &mut reservation)?;
         for dependency in dependencies {
             match dependency.reserve() {
                 Ok(subscription) => state.subscriptions.push(Some(subscription)),
@@ -64,18 +95,17 @@ impl<T: Send + 'static> FrameBatch<T> {
                 }
             }
         }
-        let completion =
-            match self
-                .core
-                .completion_port
-                .begin(cpu.completion_capacity, cpu.storage(), class)
-            {
-                Ok(completion) => completion,
-                Err(error) => {
-                    state.subscriptions.clear();
-                    return Err(error);
-                }
-            };
+        let completion = match self
+            .core
+            .completion_port
+            .begin_reserved(cpu.completion_capacity, &mut reservation)
+        {
+            Ok(completion) => completion,
+            Err(error) => {
+                state.subscriptions.clear();
+                return Err(error);
+            }
+        };
         state.generation = generation;
         state.dependencies.extend_from_slice(dependencies);
         self.core
@@ -143,9 +173,9 @@ impl<T: Send + 'static> FrameBatch<T> {
                 binder.bind(Arc::downgrade(&sink), generation, input);
             }
         }
-        if plan.priority == FramePriority::Prerequisite {
+        if promote && plan.priority == FramePriority::Prerequisite {
             self.core.clone().require_urgent(generation);
         }
-        Ok(())
+        Ok(reservation)
     }
 }

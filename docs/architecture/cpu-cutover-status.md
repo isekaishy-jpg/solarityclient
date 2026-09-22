@@ -631,6 +631,38 @@ admission. All-target/all-feature Clippy with warnings denied, formatting and
 diff checks pass. Logs are `target/pose-inputs-tests.log`,
 `target/pose-inputs-runtime-final.log` and `target/pose-inputs-clippy.log`.
 
+The next scheduler/pose batch connects scheduler and domain admission. Frame and
+load graph metadata now plans job cells, nodes, contextual cancellation flags,
+edges, propagation queues, external dependency records and completion-port arrays
+as one peak-safe working set. Readiness ports independently use the same grouped
+admission. Retired allocations recycle their charge only after backing storage is
+freed, including the FIFO propagation ring.
+
+The graph binding API can include a domain output bound in that same reservation.
+Domain preparation runs outside scheduler locks while caller-owned inputs remain
+in place. Failure or unwind retires the empty epoch and releases subscriptions
+without cancelling shared producers; deferred priority publication prevents an
+empty preparation from racing a queued promotion. Successful binding releases
+unused reserved headroom before worker dispatch. Root, seeded callback, vehicle
+palette and discovered late pose paths all use this boundary for their full/named
+outputs. The pressure fixture now drives production root-pose startup and proves
+that outputs alone fitting is insufficient when scheduler storage cannot fit.
+
+This closes scheduler/output admission for those pose phases and grouped scheduler
+metadata for existing frame/load bindings. Copied-input/return staging is still
+admitted earlier, and aggregate geometry/simulation reservation, other domain
+storage, native overlap and the complete qualification requirements remain open.
+Build 177 remains installed; no additional client package is produced.
+
+Grouped validation passes 151 CPU tests and 504 runtime library tests (655 total,
+30 existing runtime ignores), including the warm graph no-allocation check,
+combined scheduler/domain byte pressure, competitor pressure during preparation,
+error/unwind/count-change cleanup behind pending readiness, and production
+full/named pose startup with exact warm capacity. All-target/all-feature CPU/runtime
+Clippy with warnings denied, formatting and diff checks pass. Evidence is
+`target/connected-phase-cpu-tests.log`, `target/connected-phase-runtime-tests.log`
+and `target/connected-phase-clippy.log`.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases

@@ -1,6 +1,7 @@
 //! Validated reusable dependency structure; epoch inputs and results stay typed.
 
 use super::{FrameBatch, FrameBatchPlan};
+use crate::completion::PrioritySink;
 use crate::storage::StorageVec;
 use crate::{CpuError, CpuExecutor, CpuStorageBudget, CpuStorageClass, CpuStorageKind, ReadyToken};
 use std::ops::Range;
@@ -134,13 +135,55 @@ impl<T: Send + 'static> FrameBatch<T> {
         dependencies: &[ReadyToken],
         costs: &[crate::JobCost],
     ) -> Result<(), CpuError> {
+        self.start_costed_graph_with_storage(cpu, template, jobs, dependencies, costs, 0, |_, _| {
+            Ok(())
+        })
+    }
+
+    /// Reserves scheduler metadata, readiness and bounded domain storage together.
+    /// Preparation runs on the caller outside scheduler locks and before transferring
+    /// inputs or launching kernels. It may only allocate from the supplied fund.
+    /// # Errors
+    /// Count, capacity and readiness refusal leaves caller inputs untouched. A failed
+    /// preparation retains caller ownership and retires the empty epoch, including
+    /// pending subscriptions. Domain preparation owns rollback of its own values.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_costed_graph_with_storage<I: crate::BatchInputs<T>>(
+        &mut self,
+        cpu: &CpuExecutor,
+        template: &FrameGraphTemplate,
+        jobs: &mut I,
+        dependencies: &[ReadyToken],
+        costs: &[crate::JobCost],
+        domain_bytes: usize,
+        prepare: impl FnOnce(&mut I, &mut crate::CpuStorageReservation) -> Result<(), CpuError>,
+    ) -> Result<(), CpuError> {
         if !costs.is_empty() && costs.len() != jobs.len() {
             return Err(CpuError::GraphInputCount);
         }
         if jobs.len() != template.job_count() {
             return Err(CpuError::GraphInputCount);
         }
-        self.begin_dependencies(cpu, template.plan, dependencies)?;
+        let mut reservation =
+            self.begin_connected(cpu, template.plan, dependencies, domain_bytes, false)?;
+        {
+            let mut admission = EmptyBinding {
+                batch: self,
+                prepared: false,
+            };
+            prepare(jobs, &mut reservation)?;
+            if jobs.len() != template.job_count() {
+                return Err(CpuError::GraphInputCount);
+            }
+            admission.prepared = true;
+        }
+        // Replacement peaks can leave unused headroom. Release it before any
+        // worker or downstream phase competes for the same storage class.
+        drop(reservation);
+        if template.plan.priority == super::FramePriority::Prerequisite {
+            let generation = self.core.lock().generation;
+            self.core.clone().require_urgent(generation);
+        }
         let mut state = self.core.lock();
         for (node, job) in jobs.drain_inputs().enumerate() {
             state.append(
@@ -156,5 +199,25 @@ impl<T: Send + 'static> FrameBatch<T> {
         self.core.launch(launch);
         self.core.finish_if_terminal();
         Ok(())
+    }
+}
+
+/// Preparation errors and unwinds cannot retain a worker lease or readiness edge.
+/// No inputs have moved and no kernel can run while this guard is armed.
+struct EmptyBinding<'a, T: Send + 'static> {
+    batch: &'a mut FrameBatch<T>,
+    prepared: bool,
+}
+impl<T: Send + 'static> Drop for EmptyBinding<'_, T> {
+    fn drop(&mut self) {
+        if self.prepared {
+            return;
+        }
+        let epoch = self.batch.core.lock().generation;
+        let owner: std::sync::Arc<dyn crate::pool::epochs::EpochOwner> = self.batch.core.clone();
+        owner.stop(epoch);
+        self.batch.core.finish_if_terminal();
+        self.batch.core.lock().clear();
+        self.batch.active = false;
     }
 }

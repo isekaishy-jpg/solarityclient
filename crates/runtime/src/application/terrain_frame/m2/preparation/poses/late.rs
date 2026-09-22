@@ -67,19 +67,22 @@ impl LatePose {
         if !palette {
             job.request_samples(bones, cpu.storage())?;
         }
-        job.admit(cpu)?;
+        let mut outputs = solarity_cpu::CpuStorageWorkingSet::default();
+        job.include_output(cpu.storage(), &mut outputs)?;
         job.measurement = self.calibration.prepare(if palette {
             source.model.animations().bones().len()
         } else {
             bones.len()
         });
         let cost = job.measurement.cost();
-        self.pending.start_costed_graph(
+        self.pending.start_costed_graph_with_storage(
             cpu,
             &FrameGraphTemplate::independent(1).with_priority(FramePriority::Prerequisite),
             &mut self.jobs,
             &[],
             &[cost],
+            outputs.bytes(),
+            |jobs, fund| jobs[0].admit_output(fund),
         )?;
         self.active = true;
         Ok(())

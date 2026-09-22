@@ -35,6 +35,7 @@ pub(super) struct PoseJob {
 
 impl PoseJob {
     /// A single discovered dependency uses the same reservation as batch output admission.
+    #[cfg(test)]
     pub(super) fn admit(&mut self, cpu: &solarity_cpu::CpuExecutor) -> Result<(), CpuError> {
         let mut plan = CpuStorageWorkingSet::default();
         self.include_output(cpu.storage(), &mut plan)?;

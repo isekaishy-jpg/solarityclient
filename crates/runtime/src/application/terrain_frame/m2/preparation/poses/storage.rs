@@ -35,15 +35,37 @@ pub(super) fn capacity<T>(buffer: &CpuBuffer<T>, needed: usize) -> Result<usize,
 }
 
 impl super::PoseBatch {
-    pub(super) fn admit_outputs(&mut self, budget: &CpuStorageBudget) -> Result<(), CpuError> {
-        let mut plan = CpuStorageWorkingSet::default();
+    /// Every known output and scheduler allocation is funded before sampling.
+    pub(super) fn start(&mut self, cpu: &CpuExecutor) -> Result<(), CpuError> {
+        let count = self.jobs.len();
+        let mut outputs = solarity_cpu::CpuStorageWorkingSet::default();
         for job in self.jobs.iter() {
-            job.include_output(budget, &mut plan)?;
+            job.include_output(cpu.storage(), &mut outputs)?;
         }
-        let mut fund = budget.reserve_working_set(Class::Frame, plan.bytes())?;
-        for job in self.jobs.iter_mut() {
-            job.admit_output(&mut fund)?;
+        self.costs.clear();
+        for job in self.jobs.iter() {
+            self.costs.push(job.measurement.cost())?;
         }
+        self.pending.start_costed_graph_with_storage(
+            cpu,
+            &solarity_cpu::FrameGraphTemplate::independent(count)
+                .with_priority(solarity_cpu::FramePriority::Prerequisite),
+            &mut self.jobs,
+            &[],
+            &self.costs,
+            outputs.bytes(),
+            |jobs, fund| {
+                for job in jobs.iter_mut() {
+                    job.admit_output(fund)?;
+                }
+                Ok(())
+            },
+        )?;
+        self.handles.clear();
+        for index in 0..count {
+            self.handles.push(self.pending.job(index)?)?;
+        }
+        self.submitted = true;
         Ok(())
     }
 

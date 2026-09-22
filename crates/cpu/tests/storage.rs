@@ -373,3 +373,157 @@ fn sequential_replacements_recycle_old_capacity_without_overreserving_the_phase(
     assert_eq!(budget.snapshot().used(Class::Frame), 0);
     Ok(())
 }
+
+#[test]
+fn connected_scheduler_and_domain_admission_refuses_before_either_grows()
+-> Result<(), Box<dyn Error>> {
+    use solarity_cpu::{FrameGraphTemplate, JobOutcome};
+    let mut cpu = executor()?;
+    let baseline = cpu.storage().snapshot().used(Class::Frame);
+    let domain_bytes = 4096;
+    let pressure = cpu.storage().reserve(
+        Class::Frame,
+        Kind::Scratch,
+        cpu.storage().snapshot().limit(Class::Frame) - baseline - domain_bytes,
+    )?;
+    let held = cpu.storage().snapshot().used(Class::Frame);
+    let mut batch = FrameBatch::with_context(|value: &mut u64, _| {
+        *value += 1;
+        JobOutcome::Succeeded
+    });
+    let template = FrameGraphTemplate::independent(1);
+    let mut inputs = vec![5];
+    let mut prepared = false;
+    let result = batch.start_costed_graph_with_storage(
+        &cpu,
+        &template,
+        &mut inputs,
+        &[],
+        &[],
+        domain_bytes,
+        |_, _| {
+            prepared = true;
+            Ok(())
+        },
+    );
+    assert!(matches!(result, Err(CpuError::StorageAtCapacity { .. })));
+    assert!(!prepared);
+    assert_eq!(inputs, [5]);
+    assert_eq!(cpu.storage().snapshot().used(Class::Frame), held);
+    assert!(batch.is_finished());
+    drop(pressure);
+
+    let mut output = None;
+    batch.start_costed_graph_with_storage(
+        &cpu,
+        &template,
+        &mut inputs,
+        &[],
+        &[],
+        domain_bytes,
+        |inputs, fund| {
+            assert_eq!(inputs, &[5]);
+            let snapshot = cpu.storage().snapshot();
+            let competitor = cpu.storage().reserve(
+                Class::Frame,
+                Kind::Scratch,
+                snapshot.limit(Class::Frame) - snapshot.used(Class::Frame),
+            )?;
+            assert!(
+                cpu.storage()
+                    .reserve(Class::Frame, Kind::Result, 1)
+                    .is_err()
+            );
+            output = Some(fund.reserve(Kind::Result, domain_bytes)?);
+            drop(competitor);
+            Ok(())
+        },
+    )?;
+    assert!(inputs.is_empty());
+    batch.reclaim(&mut inputs)?;
+    assert_eq!(inputs, [6]);
+    drop(output);
+    let warm = cpu.storage().snapshot().used(Class::Frame);
+    let pressure = cpu.storage().reserve(
+        Class::Frame,
+        Kind::Scratch,
+        cpu.storage().snapshot().limit(Class::Frame) - warm,
+    )?;
+    batch.start(&cpu, &mut inputs)?;
+    batch.reclaim(&mut inputs)?;
+    assert_eq!(inputs, [7]);
+    drop((batch, pressure));
+    cpu.shutdown()?;
+    assert_eq!(cpu.storage().snapshot().used(Class::Frame), baseline);
+    Ok(())
+}
+
+#[test]
+fn connected_preparation_error_unwind_and_count_change_retire_empty_gated_epochs()
+-> Result<(), Box<dyn Error>> {
+    use solarity_cpu::{FrameGraphTemplate, FramePriority, JobOutcome};
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    let mut cpu = executor()?;
+    let mut port = CompletionPort::new(1, cpu.storage(), Class::Frame)?;
+    let template = FrameGraphTemplate::independent(1).with_priority(FramePriority::Prerequisite);
+    let mut batch = FrameBatch::new(|value: &mut u64| *value += 1);
+    let mut inputs = vec![11];
+    let result = batch.start_costed_graph_with_storage(
+        &cpu,
+        &template,
+        &mut inputs,
+        &[port.readiness()],
+        &[],
+        16,
+        |_, _| Err(CpuError::StorageAllocation),
+    );
+    assert!(matches!(result, Err(CpuError::StorageAllocation)));
+    assert!(matches!(batch.completion(), Err(CpuError::BatchInactive)));
+    assert_eq!(inputs, [11]);
+    assert!(batch.is_finished());
+    assert!(
+        catch_unwind(AssertUnwindSafe(|| {
+            let _ = batch.start_costed_graph_with_storage(
+                &cpu,
+                &template,
+                &mut inputs,
+                &[port.readiness()],
+                &[],
+                16,
+                |_, _| panic!("preparation unwinds before binding"),
+            );
+        }))
+        .is_err()
+    );
+    assert!(matches!(batch.completion(), Err(CpuError::BatchInactive)));
+    assert_eq!(inputs, [11]);
+    let result = batch.start_costed_graph_with_storage(
+        &cpu,
+        &template,
+        &mut inputs,
+        &[port.readiness()],
+        &[],
+        0,
+        |inputs, _| {
+            inputs.push(17);
+            Ok(())
+        },
+    );
+    assert!(matches!(result, Err(CpuError::GraphInputCount)));
+    assert_eq!(inputs, [11, 17]);
+    // Every failed binding unsubscribed without cancelling the shared producer.
+    port.producer()?.complete(JobOutcome::Succeeded)?;
+    port.restart(1, cpu.storage(), Class::Frame)?;
+    batch.start_graph(
+        &cpu,
+        &FrameGraphTemplate::independent(2),
+        &mut inputs,
+        &[port.readiness()],
+    )?;
+    port.producer()?.complete(JobOutcome::Succeeded)?;
+    batch.reclaim(&mut inputs)?;
+    assert_eq!(inputs, [12, 18]);
+    drop((batch, port));
+    cpu.shutdown()?;
+    Ok(())
+}
