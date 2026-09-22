@@ -158,7 +158,7 @@ fn static_groups_preserve_model_results_across_gaps_errors_and_abandonment()
         for index in 0..count {
             batch.push(index * 2, input(Vec3::X * index as f32 * 7.), view)?;
         }
-        batch.start(&cpu)?;
+        batch.start()?;
         for index in 0..count {
             batch.wait_for(index * 2, &mut FrameWait::Offline)?;
             assert!(batch.is_ready(index * 2)?);
@@ -182,7 +182,7 @@ fn static_groups_preserve_model_results_across_gaps_errors_and_abandonment()
     ));
     batch.push(2, invalid, view)?;
     batch.push(4, input(Vec3::X * 50.), view)?;
-    batch.start(&cpu)?;
+    batch.start()?;
     batch.wait_for(0, &mut FrameWait::Offline)?;
     assert!(batch.is_ready(0)?);
     assert!(batch.take(0)?.is_some());
@@ -192,7 +192,7 @@ fn static_groups_preserve_model_results_across_gaps_errors_and_abandonment()
     batch.finish(&mut FrameWait::Offline)?;
     batch.prepare(&cpu, 1)?;
     batch.push(0, input(Vec3::ZERO), view)?;
-    batch.start(&cpu)?;
+    batch.start()?;
     batch.wait_for(0, &mut FrameWait::Offline)?;
     assert!(batch.is_ready(0)?);
     assert_eq!(
@@ -213,7 +213,11 @@ fn static_input_admission_refusal_leaves_the_phase_reusable() -> Result<(), Box<
     batch.prepare(&cpu, 1)?;
     let view = view()?;
     batch.push(0, input(Vec3::ZERO), view)?;
-    batch.start(&cpu)?;
+    // Captured inputs may be abandoned before the admitted epoch publishes anything.
+    batch.finish(&mut FrameWait::Offline)?;
+    batch.prepare(&cpu, 1)?;
+    batch.push(0, input(Vec3::ZERO), view)?;
+    batch.start()?;
     batch.wait_for(0, &mut FrameWait::Offline)?;
     assert!(batch.is_ready(0)?);
     assert!(batch.take(0)?.is_some());

@@ -39,6 +39,6 @@ impl M2Frame {
             input.doodad_opacity = self.doodad_scene.opacity(index);
             self.spatial_batch.push(index, input, spatial_view)?;
         }
-        self.spatial_batch.start(cpu)
+        self.spatial_batch.start()
     }
 }

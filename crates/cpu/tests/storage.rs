@@ -527,3 +527,65 @@ fn connected_preparation_error_unwind_and_count_change_retire_empty_gated_epochs
     cpu.shutdown()?;
     Ok(())
 }
+
+#[test]
+fn incremental_groups_fit_as_a_whole_and_keep_readiness_and_slot_order()
+-> Result<(), Box<dyn Error>> {
+    use solarity_cpu::{JobCost, JobOutcome};
+    let mut cpu = executor()?;
+    let port = CompletionPort::new(1, cpu.storage(), Class::Frame)?;
+    let mut batch = FrameBatch::new(|value: &mut u64| *value += 1);
+    let mut staged = solarity_cpu::CpuBuffer::default();
+    let bytes = staged.reservation_bytes(cpu.storage(), Class::Frame, 4)?;
+    batch.begin_with_storage(
+        &cpu,
+        FrameBatchPlan::new(4, 0),
+        &[port.readiness()],
+        bytes,
+        |fund| staged.reserve_reserved(fund, Kind::Result, 4),
+    )?;
+    staged.extend_from_slice(&[1, 2])?;
+    let costs = [JobCost::default(); 2];
+    assert!(matches!(
+        batch.push_all_with_cost(&mut staged, &costs[..1]),
+        Err(CpuError::GraphInputCount)
+    ));
+    assert_eq!(&*staged, &[1, 2]);
+    let first = batch.push_all_with_cost(&mut staged, &costs)?;
+    assert_eq!(first, 0);
+    staged.extend_from_slice(&[3, 4, 5])?;
+    assert!(matches!(
+        batch.push_all_with_cost(&mut staged, &[]),
+        Err(CpuError::BatchCapacity)
+    ));
+    assert_eq!(&*staged, &[3, 4, 5]);
+    staged.truncate(2);
+    assert_eq!(batch.push_all_with_cost(&mut staged, &costs)?, 2);
+    for index in 0..4 {
+        assert!(batch.outcome(&batch.job(index)?)?.is_none());
+    }
+    batch.close();
+    staged.push(9)?;
+    assert!(matches!(
+        batch.push_all_with_cost(&mut staged, &[]),
+        Err(CpuError::BatchClosed)
+    ));
+    assert_eq!(&*staged, &[9]);
+    staged.clear();
+    port.producer()?.complete(JobOutcome::Succeeded)?;
+    batch.reclaim_into(&mut staged.writer())?;
+    assert_eq!(&*staged, &[2, 3, 4, 5]);
+    let pressure = cpu.storage().reserve(
+        Class::Frame,
+        Kind::Scratch,
+        cpu.storage().snapshot().limit(Class::Frame) - cpu.storage().snapshot().used(Class::Frame),
+    )?;
+    batch.begin_with_storage(&cpu, FrameBatchPlan::new(4, 0), &[], 0, |_| Ok(()))?;
+    assert_eq!(batch.push_all_with_cost(&mut staged, &[])?, 0);
+    batch.close();
+    batch.reclaim_into(&mut staged.writer())?;
+    assert_eq!(&*staged, &[3, 4, 5, 6]);
+    drop((pressure, staged, batch, port));
+    cpu.shutdown()?;
+    Ok(())
+}

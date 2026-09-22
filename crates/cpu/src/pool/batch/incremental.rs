@@ -35,6 +35,47 @@ impl<T: Send + 'static> FrameBatch<T> {
         self.push_after_with_cost(job, &[], cost)
     }
 
+    /// Publishes an independent group with one queue transaction under an open epoch.
+    /// Returns the first node index; `job` exposes stable handles after publication.
+    /// All inputs remain with the caller if the complete group cannot be accepted.
+    /// # Errors
+    /// Rejects inactive/closed epochs, mismatched hints and insufficient node capacity.
+    pub fn push_all_with_cost(
+        &mut self,
+        jobs: &mut impl crate::BatchInputs<T>,
+        costs: &[crate::JobCost],
+    ) -> Result<usize, CpuError> {
+        if !self.active {
+            return Err(CpuError::BatchInactive);
+        }
+        if !costs.is_empty() && costs.len() != jobs.len() {
+            return Err(CpuError::GraphInputCount);
+        }
+        let mut state = self.core.lock();
+        if !state.open {
+            return Err(CpuError::BatchClosed);
+        }
+        if jobs.len() > state.plan.jobs.saturating_sub(state.jobs.len()) {
+            return Err(CpuError::BatchCapacity);
+        }
+        let first = state.jobs.len();
+        for (index, job) in jobs.drain_inputs().enumerate() {
+            state.append(
+                Some(job),
+                costs.get(index).copied().unwrap_or_default(),
+                std::iter::empty(),
+            );
+        }
+        let raised = self.core.update_cost(&mut state);
+        let launch = state.runners_to_launch();
+        drop(state);
+        if raised {
+            self.core.refresh_cost();
+        }
+        self.core.launch(launch);
+        Ok(first)
+    }
+
     /// Adds a cost hint to dependency admission. Priority and eligibility still
     /// take precedence; only simultaneously ready jobs may exchange execution order.
     /// # Errors

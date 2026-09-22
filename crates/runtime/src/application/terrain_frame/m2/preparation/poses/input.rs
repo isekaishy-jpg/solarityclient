@@ -95,28 +95,60 @@ impl PoseJob {
             .1
             .ok_or(CpuError::StorageSizeOverflow)?;
         let mut plan = CpuStorageWorkingSet::default();
+        self.include_inputs(
+            budget,
+            orientation.len(),
+            transforms.len(),
+            count,
+            &mut plan,
+        )?;
+        let mut fund = budget.reserve_working_set(Class::Frame, plan.bytes())?;
+        self.prepare_inputs_reserved(&mut fund, orientation, transforms, sequences)
+    }
+
+    fn include_inputs(
+        &self,
+        budget: &CpuStorageBudget,
+        orientation: usize,
+        transforms: usize,
+        count: usize,
+        plan: &mut CpuStorageWorkingSet,
+    ) -> Result<(), CpuError> {
         plan.include(
             self.orientation
-                .reservation_bytes(budget, Class::Frame, orientation.len())?,
-            self.orientation.replacement_credit(orientation.len()),
+                .reservation_bytes(budget, Class::Frame, orientation)?,
+            self.orientation.replacement_credit(orientation),
         )?;
         plan.include(
             self.transforms
-                .reservation_bytes(budget, Class::Frame, transforms.len())?,
-            self.transforms.replacement_credit(transforms.len()),
+                .reservation_bytes(budget, Class::Frame, transforms)?,
+            self.transforms.replacement_credit(transforms),
         )?;
         plan.include(
             self.sequences
                 .reservation_bytes(budget, Class::Frame, count)?,
             self.sequences.replacement_credit(count),
         )?;
-        let mut fund = budget.reserve_working_set(Class::Frame, plan.bytes())?;
+        Ok(())
+    }
+
+    fn prepare_inputs_reserved(
+        &mut self,
+        fund: &mut CpuStorageReservation,
+        orientation: &[bool],
+        transforms: &[(u16, Mat4)],
+        sequences: impl Iterator<Item = (u16, M2AnimationClock)>,
+    ) -> Result<(), CpuError> {
+        let count = sequences
+            .size_hint()
+            .1
+            .ok_or(CpuError::StorageSizeOverflow)?;
         self.orientation
-            .reserve_reserved(&mut fund, Kind::Scratch, orientation.len())?;
+            .reserve_reserved(fund, Kind::Scratch, orientation.len())?;
         self.transforms
-            .reserve_reserved(&mut fund, Kind::Scratch, transforms.len())?;
+            .reserve_reserved(fund, Kind::Scratch, transforms.len())?;
         self.sequences
-            .reserve_reserved(&mut fund, Kind::Scratch, count)?;
+            .reserve_reserved(fund, Kind::Scratch, count)?;
         self.orientation.clear();
         self.orientation.extend_from_slice(orientation)?;
         self.transforms.clear();
@@ -134,12 +166,20 @@ impl PoseJob {
         bones: &[usize],
         budget: &solarity_cpu::CpuStorageBudget,
     ) -> Result<(), solarity_cpu::CpuError> {
-        self.requested.reserve(
-            budget,
-            solarity_cpu::CpuStorageClass::Frame,
-            solarity_cpu::CpuStorageKind::Metadata,
-            bones.len(),
-        )?;
+        let bytes = self
+            .requested
+            .reservation_bytes(budget, Class::Frame, bones.len())?;
+        let mut fund = budget.reserve_working_set(Class::Frame, bytes)?;
+        self.request_samples_reserved(bones, &mut fund)
+    }
+
+    pub(super) fn request_samples_reserved(
+        &mut self,
+        bones: &[usize],
+        fund: &mut CpuStorageReservation,
+    ) -> Result<(), CpuError> {
+        self.requested
+            .reserve_reserved(fund, Kind::Metadata, bones.len())?;
         self.requested.clear();
         self.requested.extend_from_slice(bones)?;
         self.sparse = true;
@@ -225,6 +265,75 @@ impl PoseJob {
             transforms,
             sequences,
         )?;
+        self.select(placement, source, clock, view, fingers);
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn prepare_reserved(
+        &mut self,
+        placement: usize,
+        source: &M2GpuSource,
+        clock: M2AnimationClock,
+        view: Mat4,
+        overrides: M2BonePoseOverrides<'_>,
+        fund: &mut CpuStorageReservation,
+    ) -> Result<(), CpuError> {
+        self.prepare_inputs_reserved(
+            fund,
+            &source.model_oriented_billboard_bones,
+            overrides.bone_transforms,
+            overrides.bone_sequences.iter().copied(),
+        )?;
+        self.select(placement, source, clock, view, overrides.finger_pose);
+        Ok(())
+    }
+
+    /// Prospective inputs, named demand and output share a fund before replacing live values.
+    pub(super) fn include_preparation(
+        &self,
+        budget: &CpuStorageBudget,
+        source: &M2GpuSource,
+        overrides: M2BonePoseOverrides<'_>,
+        requested: Option<&[usize]>,
+        plan: &mut CpuStorageWorkingSet,
+    ) -> Result<(), CpuError> {
+        self.include_inputs(
+            budget,
+            source.model_oriented_billboard_bones.len(),
+            overrides.bone_transforms.len(),
+            overrides.bone_sequences.len(),
+            plan,
+        )?;
+        let same = self.retains_layout(source);
+        let bones = source.model.animations().bones().len();
+        if let Some(requested) = requested {
+            let empty = CpuBuffer::default();
+            let buffer = if same { &self.requested } else { &empty };
+            plan.include(
+                buffer.reservation_bytes(budget, Class::Frame, requested.len())?,
+                buffer.replacement_credit(requested.len()),
+            )?;
+            if same {
+                self.samples.include_cpu_storage(budget, bones, plan)
+            } else {
+                M2BoneSamples::default().include_cpu_storage(budget, bones, plan)
+            }
+        } else if same {
+            self.pose.include_cpu_storage(budget, bones, plan)
+        } else {
+            M2BonePose::default().include_cpu_storage(budget, bones, plan)
+        }
+    }
+
+    fn select(
+        &mut self,
+        placement: usize,
+        source: &M2GpuSource,
+        clock: M2AnimationClock,
+        view: Mat4,
+        fingers: Option<(M2AnimationClock, M2FingerPoseHands)>,
+    ) {
         self.placement = placement;
         self.trace = solarity_profiling::TraceContext::capture().fork("m2.pose.request");
         if !self.retains_layout(source) {
@@ -246,7 +355,6 @@ impl PoseJob {
         self.result = None;
         self.sparse = false;
         self.requested.clear();
-        Ok(())
     }
 
     /// Computes pure skeletal work without publishing errors or scene state.

@@ -3,7 +3,7 @@ use super::super::super::{M2GpuSource, RuntimeTerrainFrameError};
 use super::input::PoseJob;
 use crate::application::frame_pipeline::FrameWait;
 use solarity_asset::{DecodedM2Model, ResourceLease};
-use solarity_cpu::{CpuExecutor, FrameBatch, FrameGraphTemplate, FramePriority};
+use solarity_cpu::{CpuExecutor, FrameBatch, FrameBatchPlan, FramePriority};
 use solarity_rendering::{M2AnimationClock, M2BonePose, M2BonePoseOverrides, M2BoneSamples};
 
 /// One ordered consumer can be suspended; reusable buffers do not pin its source after the frame.
@@ -43,48 +43,57 @@ impl LatePose {
         if self.active {
             return Err(solarity_cpu::CpuError::BatchActive.into());
         }
-        self.jobs.reserve(
-            cpu.storage(),
-            solarity_cpu::CpuStorageClass::Frame,
-            solarity_cpu::CpuStorageKind::Result,
-            1,
-        )?;
-        if self.jobs.is_empty() {
+        let mut empty = self
+            .jobs
+            .is_empty()
+            .then(|| PoseJob::new(ResourceLease::clone(&source.model)));
+        let job = self
+            .jobs
+            .first()
+            .or(empty.as_ref())
+            .unwrap_or_else(|| unreachable!("late pose has a retained or fresh input"));
+        let mut plan = solarity_cpu::CpuStorageWorkingSet::default();
+        plan.include(
             self.jobs
-                .push(PoseJob::new(ResourceLease::clone(&source.model)))?;
-        }
-        let job = &mut self.jobs[0];
-        job.prepare(
-            index,
-            source,
-            clock,
-            view,
-            overrides.finger_pose,
-            overrides.bone_transforms,
-            overrides.bone_sequences.iter().copied(),
-            cpu.storage(),
+                .reservation_bytes(cpu.storage(), solarity_cpu::CpuStorageClass::Frame, 1)?,
+            self.jobs.replacement_credit(1),
         )?;
-        if !palette {
-            job.request_samples(bones, cpu.storage())?;
-        }
-        let mut outputs = solarity_cpu::CpuStorageWorkingSet::default();
-        job.include_output(cpu.storage(), &mut outputs)?;
+        job.include_preparation(
+            cpu.storage(),
+            source,
+            overrides,
+            (!palette).then_some(bones),
+            &mut plan,
+        )?;
+        self.pending.begin_with_storage(
+            cpu,
+            FrameBatchPlan::new(1, 0).with_priority(FramePriority::Prerequisite),
+            &[],
+            plan.bytes(),
+            |fund| {
+                self.jobs
+                    .reserve_reserved(fund, solarity_cpu::CpuStorageKind::Result, 1)?;
+                if let Some(job) = empty.take() {
+                    self.jobs.push(job)?;
+                }
+                let job = &mut self.jobs[0];
+                job.prepare_reserved(index, source, clock, view, overrides, fund)?;
+                if !palette {
+                    job.request_samples_reserved(bones, fund)?;
+                }
+                job.admit_output(fund)
+            },
+        )?;
+        self.active = true;
+        let job = &mut self.jobs[0];
         job.measurement = self.calibration.prepare(if palette {
             source.model.animations().bones().len()
         } else {
             bones.len()
         });
         let cost = job.measurement.cost();
-        self.pending.start_costed_graph_with_storage(
-            cpu,
-            &FrameGraphTemplate::independent(1).with_priority(FramePriority::Prerequisite),
-            &mut self.jobs,
-            &[],
-            &[cost],
-            outputs.bytes(),
-            |jobs, fund| jobs[0].admit_output(fund),
-        )?;
-        self.active = true;
+        self.pending.push_all_with_cost(&mut self.jobs, &[cost])?;
+        self.pending.close();
         Ok(())
     }
     pub(in crate::application::terrain_frame::m2) fn is_ready(&self) -> bool {

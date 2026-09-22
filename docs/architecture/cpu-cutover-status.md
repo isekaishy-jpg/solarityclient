@@ -701,6 +701,40 @@ formatting and diff checks pass. Evidence is
 `target/geometry-group-cpu-tests.log`, `target/geometry-group-runtime-final.log`
 and `target/geometry-group-clippy.log`.
 
+Incremental admission now exposes the same connected scheduler/domain funding
+used by complete graph bindings. Preparation runs outside scheduler locks;
+refusal or unwind retires the empty epoch and subscriptions before publication.
+Independent groups can enter an open epoch in one queue transaction, preserving
+stable ordered slots and refusing the whole group on count/capacity errors.
+
+Geometry staging, reuse-index metadata and complete return arrays now share the
+opening scheduler reservation. Existing worker-group output/simulation admission
+and incremental root overlap remain intact. Static spatial admission funds its
+bounded inline input/result records, indices, hints, return handles and scheduler
+before scene capture; publication retains one transaction, and empty or abandoned
+phases use the normal close/reclaim path.
+
+Discovered late-pose dependencies now admit their complete single-operation working
+set: staging/return storage, copied orientation/transforms/sequence clocks, named
+bone requests, full or sparse output and scheduler readiness. No copied input grows
+on combined capacity refusal. Warm reuse and source-generation replacement retain
+the existing pose ownership rules; sampling and callback order are unchanged.
+Root/scene pose batch input staging, geometry storage spanning all incrementally
+discovered groups, and the other domain/residency requirements remain open. This
+batch does not complete the cutover. Build 177 remains the installed package.
+
+Validation: all 152 CPU tests and 505 runtime library tests pass (30 existing
+runtime ignores). The runtime check includes full/sparse late-pose cold refusal
+one byte below the complete requirement, zero-headroom warm reuse and exact
+serial parity. Geometry/spatial tests verify combined scheduler/staging refusal,
+empty epochs and abandonment before publication. CPU coverage verifies whole-group
+refusal, external readiness, stable result order, warm reuse and preparation
+error/unwind cleanup. All-target/all-feature CPU/runtime Clippy with warnings
+denied, formatting and diff checks pass. Logs are
+`target/incremental-admission-cpu-tests.log`,
+`target/incremental-admission-runtime-final.log` and
+`target/incremental-admission-clippy.log`.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases

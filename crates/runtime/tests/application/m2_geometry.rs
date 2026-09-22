@@ -426,6 +426,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         .frame(1.)?;
         assert_worker_admission_refusal(&cpu, candidate, camera)?;
         assert_finalization_start_refusal(&cpu, candidate)?;
+        assert_late_pose_connected_admission(candidate.sources[0].as_ref().ok_or("source")?)?;
         let mut abandoned = candidate.begin_visible_draws_with_unit_effects(
             &renderer,
             &cpu,
@@ -700,5 +701,146 @@ fn assert_finalization_start_refusal(
         )
     );
     drop(holds);
+    Ok(())
+}
+
+/// Exercise actual late-pose preparation, including copied overrides and named demand,
+/// under a budget that permits all but one byte of its complete cold phase.
+fn assert_late_pose_connected_admission(source: &M2GpuSource) -> Result<(), Box<dyn Error>> {
+    use super::super::poses::LatePose;
+    use solarity_cpu::{CpuStorageClass as Class, CpuStorageKind as Kind, CpuStoragePlan};
+    use solarity_rendering::{M2BoneSamples, M2BoneTransforms};
+    let clock = M2AnimationClock::new(0, 120., 120.);
+    let transforms = [(0, Mat4::from_translation(Vec3::Y))];
+    let sequences = [(0, clock)];
+    let overrides = M2BonePoseOverrides {
+        model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
+        bone_transforms: &transforms,
+        bone_sequences: &sequences,
+        ..Default::default()
+    };
+    for palette in [true, false] {
+        let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+            solarity_cpu::CpuExecutionPlan::new(0, 1, 1, 1)?,
+            NonZeroUsize::MIN,
+            CpuStoragePlan::new(1 << 20, 1 << 20, 0),
+        ))?;
+        let budget = cpu.storage().clone();
+        let baseline = budget.snapshot().used(Class::Frame);
+        let mut probe = LatePose::default();
+        probe.start(
+            &cpu,
+            0,
+            source,
+            clock,
+            Mat4::IDENTITY,
+            overrides,
+            &[0],
+            palette,
+        )?;
+        probe.finish(&mut FrameWait::Offline)?;
+        let required = budget.snapshot().peak(Class::Frame) - baseline;
+        drop(probe);
+        assert_eq!(budget.snapshot().used(Class::Frame), baseline);
+        let pressure = budget.reserve(
+            Class::Frame,
+            Kind::Scratch,
+            budget.snapshot().limit(Class::Frame) - baseline - required + 1,
+        )?;
+        let held = budget.snapshot().used(Class::Frame);
+        let mut late = LatePose::default();
+        assert!(matches!(
+            late.start(
+                &cpu,
+                0,
+                source,
+                clock,
+                Mat4::IDENTITY,
+                overrides,
+                &[0],
+                palette
+            ),
+            Err(RuntimeTerrainFrameError::Cpu(
+                solarity_cpu::CpuError::StorageAtCapacity { .. }
+            ))
+        ));
+        assert!(late.is_ready());
+        assert_eq!(
+            budget.snapshot().used(Class::Frame),
+            held,
+            "refusal cannot grow even the copied inputs or scheduler"
+        );
+        drop(pressure);
+        late.start(
+            &cpu,
+            0,
+            source,
+            clock,
+            Mat4::IDENTITY,
+            overrides,
+            &[0],
+            palette,
+        )?;
+        late.finish(&mut FrameWait::Offline)?;
+        let pressure = budget.reserve(
+            Class::Frame,
+            Kind::Scratch,
+            budget.snapshot().limit(Class::Frame) - budget.snapshot().used(Class::Frame),
+        )?;
+        late.start(
+            &cpu,
+            0,
+            source,
+            clock,
+            Mat4::IDENTITY,
+            overrides,
+            &[0],
+            palette,
+        )?;
+        late.finish(&mut FrameWait::Offline)?;
+        drop(pressure);
+        if palette {
+            let mut serial = M2BonePose::default();
+            serial.recompose_with_overrides(
+                source.model.animations(),
+                clock,
+                Mat4::IDENTITY,
+                overrides,
+            )?;
+            let mut output = M2BonePose::default();
+            assert!(late.take(
+                0,
+                &source.model,
+                clock,
+                Mat4::IDENTITY,
+                overrides,
+                &mut output
+            )?);
+            assert_eq!(output.transforms(), serial.transforms());
+        } else {
+            let mut serial = M2BoneSamples::default();
+            serial.recompose(
+                source.model.animations(),
+                clock,
+                Mat4::IDENTITY,
+                overrides,
+                &[0],
+            )?;
+            let mut output = M2BoneSamples::default();
+            assert!(late.take_samples(
+                0,
+                &source.model,
+                clock,
+                Mat4::IDENTITY,
+                overrides,
+                &[0],
+                &mut output
+            )?);
+            assert_eq!(output.bone_transform(0), serial.bone_transform(0));
+        }
+        drop(late);
+        cpu.shutdown()?;
+        assert_eq!(budget.snapshot().used(Class::Frame), baseline);
+    }
     Ok(())
 }

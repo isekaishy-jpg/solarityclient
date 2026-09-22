@@ -30,8 +30,8 @@ impl M2Frame {
             .remaining_count()
             .checked_add(self.unit_effects.pending_placement_count())
             .ok_or(VulkanError::WorldFrameCapacity)?;
-        self.geometry_batch
-            .prepare_metadata(cpu.storage(), maximum)?;
+        self.geometry_batch.prepare_scratch(cpu)?;
+        self.geometry_batch.begin_metadata(cpu, maximum)?;
         self.geometry_batch
             .reuse
             .index(&mut self.geometry_batch.jobs);
@@ -39,10 +39,6 @@ impl M2Frame {
         self.geometry_batch.published_bones = 0;
         self.geometry_batch.completion = None;
         self.geometry_batch.storage = Some(cpu.storage().clone());
-        self.geometry_batch.prepare_scratch(cpu)?;
-        self.geometry_batch
-            .pending
-            .begin(cpu, solarity_cpu::FrameBatchPlan::new(maximum, 0))?;
         self.geometry_batch.submitted = true;
         self.geometry_batch.completion = Some(self.geometry_batch.pending.completion()?);
         Ok(())

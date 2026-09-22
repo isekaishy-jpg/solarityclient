@@ -20,6 +20,39 @@ impl<T: Send + 'static> FrameBatch<T> {
             .map(|_| ())
     }
 
+    /// Opens incremental publication only after scheduler and domain storage fit together.
+    /// Preparation runs outside scheduler locks, before any input can be published.
+    /// The callback must allocate from the supplied fund; unused capacity is released
+    /// before this method returns. Callers must close and reclaim a successful epoch.
+    /// # Errors
+    /// Capacity/readiness refusal does not invoke preparation. Preparation errors or
+    /// unwinds retire the empty epoch and its subscriptions, retaining caller ownership.
+    /// The callback is responsible for rollback of its own values.
+    pub fn begin_with_storage(
+        &mut self,
+        cpu: &CpuExecutor,
+        plan: FrameBatchPlan,
+        dependencies: &[ReadyToken],
+        domain_bytes: usize,
+        prepare: impl FnOnce(&mut CpuStorageReservation) -> Result<(), CpuError>,
+    ) -> Result<(), CpuError> {
+        let mut reservation = self.begin_connected(cpu, plan, dependencies, domain_bytes, false)?;
+        {
+            let mut admission = EmptyBinding {
+                batch: self,
+                prepared: false,
+            };
+            prepare(&mut reservation)?;
+            admission.prepared = true;
+        }
+        drop(reservation);
+        if plan.priority == FramePriority::Prerequisite {
+            let generation = self.core.lock().generation;
+            self.core.clone().require_urgent(generation);
+        }
+        Ok(())
+    }
+
     /// Domain bytes remain protected after scheduler allocation and until input binding.
     pub(super) fn begin_connected(
         &mut self,
@@ -177,5 +210,25 @@ impl<T: Send + 'static> FrameBatch<T> {
             self.core.clone().require_urgent(generation);
         }
         Ok(reservation)
+    }
+}
+
+/// Preparation errors and unwinds cannot retain a worker lease or readiness edge.
+/// No inputs have moved and no kernel can run while this guard is armed.
+struct EmptyBinding<'a, T: Send + 'static> {
+    batch: &'a mut FrameBatch<T>,
+    prepared: bool,
+}
+impl<T: Send + 'static> Drop for EmptyBinding<'_, T> {
+    fn drop(&mut self) {
+        if self.prepared {
+            return;
+        }
+        let epoch = self.batch.core.lock().generation;
+        let owner: std::sync::Arc<dyn crate::pool::epochs::EpochOwner> = self.batch.core.clone();
+        owner.stop(epoch);
+        self.batch.core.finish_if_terminal();
+        self.batch.core.lock().clear();
+        self.batch.active = false;
     }
 }

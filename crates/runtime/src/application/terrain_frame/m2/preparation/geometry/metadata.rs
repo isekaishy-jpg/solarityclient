@@ -1,15 +1,15 @@
 //! Admit retained dispatch/reclamation arrays before any model can leave main.
 use super::GeometryBatch;
 use solarity_cpu::{
-    CpuError, CpuStorageBudget, CpuStorageClass as Class, CpuStorageKind as Kind,
-    CpuStorageWorkingSet,
+    CpuError, CpuExecutor, CpuStorageClass as Class, CpuStorageKind as Kind, CpuStorageWorkingSet,
 };
 impl GeometryBatch {
-    pub(super) fn prepare_metadata(
+    pub(super) fn begin_metadata(
         &mut self,
-        budget: &CpuStorageBudget,
+        cpu: &CpuExecutor,
         maximum: usize,
     ) -> Result<(), CpuError> {
+        let budget = cpu.storage();
         // Unmatched prior jobs coexist with placeholders/new jobs until phase return.
         let jobs = self
             .jobs
@@ -38,16 +38,27 @@ impl GeometryBatch {
                 .reservation_bytes(budget, Class::Frame, maximum)?,
             self.returned_chunks.replacement_credit(maximum),
         )?;
-        let mut reservation = budget.reserve_working_set(Class::Frame, plan.bytes())?;
-        self.reuse
-            .heads
-            .reserve_reserved(&mut reservation, reuse_count)?;
-        self.jobs
-            .reserve_reserved(&mut reservation, Kind::Metadata, jobs)?;
-        self.spare_chunks
-            .reserve_reserved(&mut reservation, Kind::Metadata, spares)?;
-        self.returned_chunks
-            .reserve_reserved(&mut reservation, Kind::Metadata, maximum)?;
+        let Self {
+            reuse,
+            jobs: owners,
+            spare_chunks,
+            returned_chunks,
+            pending,
+            ..
+        } = self;
+        pending.begin_with_storage(
+            cpu,
+            solarity_cpu::FrameBatchPlan::new(maximum, 0),
+            &[],
+            plan.bytes(),
+            |reservation| {
+                reuse.heads.reserve_reserved(reservation, reuse_count)?;
+                owners.reserve_reserved(reservation, Kind::Metadata, jobs)?;
+                spare_chunks.reserve_reserved(reservation, Kind::Metadata, spares)?;
+                returned_chunks.reserve_reserved(reservation, Kind::Metadata, maximum)?;
+                Ok(())
+            },
+        )?;
         Ok(())
     }
 }
@@ -56,25 +67,57 @@ impl GeometryBatch {
 mod tests {
     use super::*;
     #[test]
-    fn complete_return_storage_is_admitted_before_any_array_grows() -> Result<(), CpuError> {
+    fn complete_return_storage_and_scheduler_are_admitted_before_any_array_grows()
+    -> Result<(), CpuError> {
+        let mut cpu = CpuExecutor::new(solarity_cpu::CpuPoolConfig::new(
+            solarity_cpu::CpuExecutionPlan::new(0, 1, 1, 1)?,
+            std::num::NonZeroUsize::MIN,
+            solarity_cpu::CpuStoragePlan::new(1 << 20, 1 << 20, 0),
+        ))?;
+        let budget = cpu.storage().clone();
+        let baseline = budget.snapshot().used(Class::Frame);
         let bytes = 3 * size_of::<super::super::GeometryOwner>()
             + 6 * size_of::<super::super::chunk::GeometryChunk>();
-        let refused = CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(bytes - 1, 0, 0));
+        let pressure = budget.reserve(
+            Class::Frame,
+            Kind::Scratch,
+            budget.snapshot().limit(Class::Frame) - baseline - bytes,
+        )?;
+        let held = budget.snapshot().used(Class::Frame);
         let mut batch = GeometryBatch::default();
-        assert!(batch.prepare_metadata(&refused, 3).is_err());
+        assert!(matches!(
+            batch.begin_metadata(&cpu, 3),
+            Err(CpuError::StorageAtCapacity { .. })
+        ));
         assert_eq!(batch.jobs.capacity(), 0);
         assert_eq!(batch.spare_chunks.capacity(), 0);
         assert_eq!(batch.returned_chunks.capacity(), 0);
-        assert_eq!(refused.snapshot().used(Class::Frame), 0);
-        let budget = CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(bytes, 0, 0));
-        batch.prepare_metadata(&budget, 3)?;
-        assert_eq!(budget.snapshot().bytes(Class::Frame, Kind::Metadata), bytes);
+        assert_eq!(budget.snapshot().used(Class::Frame), held);
+        assert!(matches!(
+            batch.pending.completion(),
+            Err(CpuError::BatchInactive)
+        ));
+        drop(pressure);
+        batch.begin_metadata(&cpu, 3)?;
+        batch.pending.close();
+        batch
+            .pending
+            .reclaim_into(&mut batch.returned_chunks.writer())?;
         let pointers = (
             batch.jobs.as_ptr(),
             batch.spare_chunks.as_ptr(),
             batch.returned_chunks.as_ptr(),
         );
-        batch.prepare_metadata(&budget, 3)?;
+        let pressure = budget.reserve(
+            Class::Frame,
+            Kind::Scratch,
+            budget.snapshot().limit(Class::Frame) - budget.snapshot().used(Class::Frame),
+        )?;
+        batch.begin_metadata(&cpu, 3)?;
+        batch.pending.close();
+        batch
+            .pending
+            .reclaim_into(&mut batch.returned_chunks.writer())?;
         assert_eq!(
             (
                 batch.jobs.as_ptr(),
@@ -83,8 +126,9 @@ mod tests {
             ),
             pointers
         );
-        drop(batch);
-        assert_eq!(budget.snapshot().used(Class::Frame), 0);
+        drop((batch, pressure));
+        cpu.shutdown()?;
+        assert_eq!(budget.snapshot().used(Class::Frame), baseline);
         Ok(())
     }
 }

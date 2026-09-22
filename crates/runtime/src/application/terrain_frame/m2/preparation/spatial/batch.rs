@@ -6,7 +6,7 @@ use crate::application::frame_pipeline::FrameWait;
 use crate::application::terrain_frame::m2::RuntimeTerrainFrameError;
 use solarity_cpu::{
     CostCalibration, CpuBuffer, CpuError, CpuExecutor, CpuStorageClass as Class,
-    CpuStorageKind as Kind, FrameBatch, FrameGraphTemplate, FrameJob, FramePriority, JobCost,
+    CpuStorageKind as Kind, FrameBatch, FrameBatchPlan, FrameJob, FramePriority, JobCost,
 };
 use std::time::Duration;
 
@@ -57,7 +57,7 @@ impl SpatialBatch {
             .unwrap_or(MAX_ENTRIES)
             .min(MAX_ENTRIES);
         let groups = maximum.div_ceil(self.width);
-        self.reserve_storage(cpu.storage(), maximum, groups)?;
+        self.begin_storage(cpu, maximum, groups)?;
         self.indices.clear();
         self.costs.clear();
         self.handles.clear();
@@ -67,12 +67,13 @@ impl SpatialBatch {
     }
 
     /// Protect all staging and return arrays before scene inputs are captured.
-    fn reserve_storage(
+    fn begin_storage(
         &mut self,
-        budget: &solarity_cpu::CpuStorageBudget,
+        cpu: &CpuExecutor,
         maximum: usize,
         groups: usize,
     ) -> Result<(), CpuError> {
+        let budget = cpu.storage();
         let mut plan = solarity_cpu::CpuStorageWorkingSet::default();
         plan.include(
             self.indices
@@ -92,15 +93,23 @@ impl SpatialBatch {
             self.jobs.reservation_bytes(budget, Class::Frame, groups)?,
             self.jobs.replacement_credit(groups),
         )?;
-        let mut reservation = budget.reserve_working_set(Class::Frame, plan.bytes())?;
-        self.indices
-            .reserve_reserved(&mut reservation, Kind::Metadata, maximum)?;
-        self.costs
-            .reserve_reserved(&mut reservation, Kind::Metadata, groups)?;
-        self.handles
-            .reserve_reserved(&mut reservation, Kind::Metadata, groups)?;
-        self.jobs
-            .reserve_reserved(&mut reservation, Kind::Result, groups)?;
+        self.pending.begin_with_storage(
+            cpu,
+            FrameBatchPlan::new(groups, 0).with_priority(FramePriority::Prerequisite),
+            &[],
+            plan.bytes(),
+            |reservation| {
+                self.indices
+                    .reserve_reserved(reservation, Kind::Metadata, maximum)?;
+                self.costs
+                    .reserve_reserved(reservation, Kind::Metadata, groups)?;
+                self.handles
+                    .reserve_reserved(reservation, Kind::Metadata, groups)?;
+                self.jobs
+                    .reserve_reserved(reservation, Kind::Result, groups)?;
+                Ok(())
+            },
+        )?;
         Ok(())
     }
 
@@ -131,24 +140,15 @@ impl SpatialBatch {
     /// capacity remains retained. This accounts for the actual peak allocation.
     pub(in crate::application::terrain_frame::m2) fn start(
         &mut self,
-        cpu: &CpuExecutor,
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.jobs.truncate(self.indices.len().div_ceil(self.width));
         for job in self.jobs.iter_mut() {
             job.measurement = self.calibration.prepare(job.count);
             self.costs.push(job.measurement.cost())?;
         }
-        if self.jobs.is_empty() {
-            return Ok(());
-        }
-        self.pending.start_costed_graph(
-            cpu,
-            &FrameGraphTemplate::independent(self.jobs.len())
-                .with_priority(FramePriority::Prerequisite),
-            &mut self.jobs,
-            &[],
-            &self.costs,
-        )?;
+        self.pending
+            .push_all_with_cost(&mut self.jobs, &self.costs)?;
+        self.pending.close();
         for group in 0..self.costs.len() {
             self.handles.push(self.pending.job(group)?)?;
         }
@@ -252,45 +252,72 @@ impl SpatialBatch {
 mod admission_tests {
     use super::*;
     #[test]
-    fn m2_spatial_connected_storage_refuses_before_any_array_grows() -> Result<(), CpuError> {
-        let maximum = 40;
-        let groups = 2;
+    fn m2_spatial_scheduler_and_staging_refuse_together_and_reuse_empty_epochs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut cpu = CpuExecutor::new(solarity_cpu::CpuPoolConfig::new(
+            solarity_cpu::CpuExecutionPlan::new(0, 1, 1, 1)?,
+            std::num::NonZeroUsize::MIN,
+            solarity_cpu::CpuStoragePlan::new(1 << 20, 1 << 20, 0),
+        ))?;
+        let budget = cpu.storage().clone();
+        let baseline = budget.snapshot().used(Class::Frame);
+        let maximum: usize = 40;
+        let groups = maximum.div_ceil(MAX_ENTRIES);
         let bytes = maximum * size_of::<usize>()
             + groups
                 * (size_of::<JobCost>()
                     + size_of::<FrameJob<SpatialJob>>()
                     + size_of::<SpatialJob>());
-        let denied =
-            solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(bytes - 1, 0, 0));
+        let pressure = budget.reserve(
+            Class::Frame,
+            Kind::Scratch,
+            budget.snapshot().limit(Class::Frame) - baseline - bytes,
+        )?;
+        let held = budget.snapshot().used(Class::Frame);
         let mut batch = SpatialBatch::default();
-        assert!(batch.reserve_storage(&denied, maximum, groups).is_err());
+        assert!(matches!(
+            batch.begin_storage(&cpu, maximum, groups),
+            Err(CpuError::StorageAtCapacity { .. })
+        ));
         assert_eq!(batch.jobs.capacity(), 0);
         assert_eq!(batch.indices.capacity(), 0);
         assert_eq!(batch.costs.capacity(), 0);
         assert_eq!(batch.handles.capacity(), 0);
-        assert_eq!(denied.snapshot().used(Class::Frame), 0);
-        let budget =
-            solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(bytes, 0, 0));
-        batch.reserve_storage(&budget, maximum, groups)?;
+        assert_eq!(budget.snapshot().used(Class::Frame), held);
+        assert!(matches!(
+            batch.pending.completion(),
+            Err(CpuError::BatchInactive)
+        ));
+        drop(pressure);
+        batch.prepare(&cpu, maximum)?;
+        batch.start()?;
+        batch.finish(&mut FrameWait::Offline)?;
         let pointers = (
             batch.jobs.as_ptr(),
             batch.indices.as_ptr(),
             batch.costs.as_ptr(),
             batch.handles.as_ptr(),
         );
-        batch.reserve_storage(&budget, maximum, groups)?;
+        let pressure = budget.reserve(
+            Class::Frame,
+            Kind::Scratch,
+            budget.snapshot().limit(Class::Frame) - budget.snapshot().used(Class::Frame),
+        )?;
+        batch.prepare(&cpu, maximum)?;
+        batch.start()?;
+        batch.finish(&mut FrameWait::Offline)?;
         assert_eq!(
-            pointers,
             (
                 batch.jobs.as_ptr(),
                 batch.indices.as_ptr(),
                 batch.costs.as_ptr(),
                 batch.handles.as_ptr()
-            )
+            ),
+            pointers
         );
-        assert_eq!(budget.snapshot().used(Class::Frame), bytes);
-        drop(batch);
-        assert_eq!(budget.snapshot().used(Class::Frame), 0);
+        drop((batch, pressure));
+        cpu.shutdown()?;
+        assert_eq!(budget.snapshot().used(Class::Frame), baseline);
         Ok(())
     }
 }

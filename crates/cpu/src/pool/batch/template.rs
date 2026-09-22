@@ -1,7 +1,6 @@
 //! Validated reusable dependency structure; epoch inputs and results stay typed.
 
 use super::{FrameBatch, FrameBatchPlan};
-use crate::completion::PrioritySink;
 use crate::storage::StorageVec;
 use crate::{CpuError, CpuExecutor, CpuStorageBudget, CpuStorageClass, CpuStorageKind, ReadyToken};
 use std::ops::Range;
@@ -164,26 +163,13 @@ impl<T: Send + 'static> FrameBatch<T> {
         if jobs.len() != template.job_count() {
             return Err(CpuError::GraphInputCount);
         }
-        let mut reservation =
-            self.begin_connected(cpu, template.plan, dependencies, domain_bytes, false)?;
-        {
-            let mut admission = EmptyBinding {
-                batch: self,
-                prepared: false,
-            };
-            prepare(jobs, &mut reservation)?;
+        self.begin_with_storage(cpu, template.plan, dependencies, domain_bytes, |fund| {
+            prepare(jobs, fund)?;
             if jobs.len() != template.job_count() {
                 return Err(CpuError::GraphInputCount);
             }
-            admission.prepared = true;
-        }
-        // Replacement peaks can leave unused headroom. Release it before any
-        // worker or downstream phase competes for the same storage class.
-        drop(reservation);
-        if template.plan.priority == super::FramePriority::Prerequisite {
-            let generation = self.core.lock().generation;
-            self.core.clone().require_urgent(generation);
-        }
+            Ok(())
+        })?;
         let mut state = self.core.lock();
         for (node, job) in jobs.drain_inputs().enumerate() {
             state.append(
@@ -199,25 +185,5 @@ impl<T: Send + 'static> FrameBatch<T> {
         self.core.launch(launch);
         self.core.finish_if_terminal();
         Ok(())
-    }
-}
-
-/// Preparation errors and unwinds cannot retain a worker lease or readiness edge.
-/// No inputs have moved and no kernel can run while this guard is armed.
-struct EmptyBinding<'a, T: Send + 'static> {
-    batch: &'a mut FrameBatch<T>,
-    prepared: bool,
-}
-impl<T: Send + 'static> Drop for EmptyBinding<'_, T> {
-    fn drop(&mut self) {
-        if self.prepared {
-            return;
-        }
-        let epoch = self.batch.core.lock().generation;
-        let owner: std::sync::Arc<dyn crate::pool::epochs::EpochOwner> = self.batch.core.clone();
-        owner.stop(epoch);
-        self.batch.core.finish_if_terminal();
-        self.batch.core.lock().clear();
-        self.batch.active = false;
     }
 }
