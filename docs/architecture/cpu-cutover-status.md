@@ -873,6 +873,32 @@ and charge release. Rendering/runtime all-target/all-feature Clippy with warning
 denied, formatting and diff checks pass. Logs are `target/callback-queue-rendering-tests.log`,
 `target/callback-queue-runtime-tests.log` and `target/callback-queue-clippy.log`.
 
+Admitted callback storage now reaches ordinary M2 placement clocks, effect
+completion/retirement, Glue's pre-camera clock, GameObject behavior and transport
+map-model clocks. The primary-completion adapter carries the same bank into its
+bone-timer path, preserving root-only completion callbacks and owned deferred
+event snapshots. CPU GameObject/transport model bindings cache their authored queue
+bound independently of GPU residency. The ordered GameObject scene pass reserves
+the largest loaded CPU model requirement before changing its scene cursor,
+opacity or timers; direct model advancement preserves an existing scene sample
+when admission fails. Unit/mount and later placement work reuse that same bank.
+The standalone clock remains for sky models, whose private playback has no
+bone-slot activation path, and serial test fixtures. Deferred event-list/clock
+ownership, persistent bone-slot storage, full geometry admission and residency
+accounting remain required. Build 177 remains installed.
+
+Validation: all 511 runtime library tests pass (30 existing ignores), including
+serial geometry, unit/effect lifecycle, GameObject and transport behavior. The
+primary-completion adapter matches its standalone clock, callback count, RNG,
+timer and deferred-event snapshots while leaving its per-playback queue empty;
+callback failure returns an empty retained charged queue. GameObject admission
+refusal preserves its prior scene sample and timer, while the transport scene
+preflight refuses before cursor/timer/RNG changes. Warm bank preparation now skips
+an empty reservation when no growth or budget transfer is needed. Runtime
+all-target/all-feature Clippy with warnings denied, formatting and diff checks
+pass. Evidence is `target/playback-consumers-tests.log` and
+`target/playback-consumers-clippy.log`.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases

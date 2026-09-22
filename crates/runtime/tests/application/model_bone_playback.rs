@@ -431,3 +431,113 @@ fn admitted_event_snapshot_preserves_refused_timers_and_matches_owned_dispatch()
     assert_eq!(budget.snapshot().used(Class::Frame), 0);
     Ok(())
 }
+
+#[test]
+fn primary_completion_uses_admitted_bone_queue_and_returns_it_on_callback_error()
+-> Result<(), Box<dyn Error>> {
+    use crate::application::model_playback::M2CallbackScratch;
+    use solarity_cpu::{CpuStorageBudget, CpuStorageClass as Class, CpuStoragePlan};
+    let (model, catalog) = playback_model()?;
+    let mut random = CrtRand::new();
+    let mut playback = M2Playback::unstarted(0, 0);
+    playback.apply_model_sequence(&model, &catalog, 0, 0, 0, &mut random)?;
+    playback.apply_bone_sequence(
+        &model,
+        4,
+        7,
+        None,
+        M2ModelAnimationMode::Forward,
+        1.,
+        0,
+        0,
+        M2SequenceStartPhase::DuringSceneUpdate,
+        &mut random,
+    )?;
+    let mut reference = playback.clone();
+    let mut failed = playback.clone();
+    let mut reference_random = random;
+    let mut failed_random = random;
+    let callbacks = solarity_rendering::m2_callback_queue_capacity(
+        model.animations(),
+        model.animations().bones().len(),
+    )?;
+    let bytes = size_of::<(u16, solarity_rendering::M2AnimationClock)>()
+        + callbacks * size_of::<solarity_rendering::M2QueuedCallback>();
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(bytes, 0, 0));
+    let mut scratch = M2CallbackScratch::default();
+    scratch.prepare(&budget, 1, callbacks)?;
+    let address = scratch.queue.as_ptr();
+    let mut reference_calls = 0;
+    let expected = reference.clock_with_completion(
+        &model,
+        2_000.,
+        &mut reference_random,
+        Some(&mut |playback, random| {
+            reference_calls += 1;
+            playback.apply_model_sequence(
+                &model,
+                &catalog,
+                7,
+                0,
+                playback.scene_time_ms,
+                random,
+            )?;
+            Ok(())
+        }),
+    )?;
+    let mut calls = 0;
+    let actual = playback.clock_with_completion_storage(
+        &model,
+        2_000.,
+        &mut random,
+        Some(&mut |playback, random| {
+            calls += 1;
+            playback.apply_model_sequence(
+                &model,
+                &catalog,
+                7,
+                0,
+                playback.scene_time_ms,
+                random,
+            )?;
+            Ok(())
+        }),
+        Some(scratch.bind(&budget, callbacks)),
+    )?;
+    assert!(calls > 0);
+    assert_eq!(calls, reference_calls);
+    assert_eq!(random, reference_random);
+    assert_eq!(actual.clock, expected.clock);
+    assert_eq!(playback.script_timer, reference.script_timer);
+    assert_eq!(playback.callback_queue.capacity(), 0);
+    assert_eq!(
+        actual.expired_variations.len(),
+        expected.expired_variations.len()
+    );
+    for (actual, expected) in actual
+        .expired_variations
+        .iter()
+        .zip(&expected.expired_variations)
+    {
+        assert_eq!(actual.clock, expected.clock);
+        assert_eq!(actual.event_window, expected.event_window);
+        assert_eq!(actual.bone_sequences, expected.bone_sequences);
+    }
+    assert!(
+        failed
+            .clock_with_completion_storage(
+                &model,
+                2_000.,
+                &mut failed_random,
+                Some(&mut |_, _| Err(solarity_cpu::CpuError::DependencyFailed.into())),
+                Some(scratch.bind(&budget, callbacks))
+            )
+            .is_err()
+    );
+    assert!(scratch.queue.is_empty());
+    assert_eq!(scratch.queue.as_ptr(), address);
+    assert_eq!(budget.snapshot().used(Class::Frame), bytes);
+    drop(scratch);
+    assert_eq!(budget.snapshot().used(Class::Frame), 0);
+    Ok(())
+}

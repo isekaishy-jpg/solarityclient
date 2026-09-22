@@ -162,8 +162,11 @@ impl UnitEffectPlacement {
         model: &solarity_asset::DecodedM2Model,
         now: f32,
         random: &mut CrtRand,
+        storage: Option<crate::application::model_playback::M2CallbackStorage<'_>>,
     ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
-        let result = self.phase.advance(playback, model, now, random);
+        let result = self
+            .phase
+            .advance_with_storage(playback, model, now, random, storage);
         if self.retiring() {
             self.sound_lifetime = None;
         }
@@ -553,17 +556,35 @@ pub(super) enum UnitEffectPhase {
 }
 
 impl UnitEffectPhase {
+    #[cfg(test)]
     pub(super) fn advance(
+        &mut self,
+        playback: &mut M2Playback,
+        model: &solarity_asset::DecodedM2Model,
+        now: f32,
+        random: &mut CrtRand,
+    ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
+        self.advance_with_storage(playback, model, now, random, None)
+    }
+
+    fn advance_with_storage(
         &mut self,
         playback: &mut M2Playback,
         model: &solarity_asset::DecodedM2Model,
         scene_time_ms: f32,
         random: &mut CrtRand,
+        storage: Option<crate::application::model_playback::M2CallbackStorage<'_>>,
     ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
         if *self == Self::Retiring {
-            return playback.clock(model, scene_time_ms, random);
+            return playback.clock_with_completion_storage(
+                model,
+                scene_time_ms,
+                random,
+                None,
+                storage,
+            );
         }
-        playback.clock_with_completion(
+        playback.clock_with_completion_storage(
             model,
             scene_time_ms,
             random,
@@ -588,6 +609,7 @@ impl UnitEffectPhase {
                 *self = Self::Retiring;
                 Ok(())
             }),
+            storage,
         )
     }
 }

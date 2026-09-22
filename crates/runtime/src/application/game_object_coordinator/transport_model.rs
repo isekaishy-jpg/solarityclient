@@ -29,6 +29,7 @@ struct ModelState {
     model: ResourceLease<DecodedM2Model>,
     playback: Rc<RefCell<M2Playback>>,
     collision: Option<PlacedM2Collision>,
+    callback_queue_capacity: usize,
 }
 
 impl TransportMapModel {
@@ -59,6 +60,10 @@ impl TransportMapModel {
                 display_id,
                 model: ResourceLease::clone(model),
                 collision: None,
+                callback_queue_capacity: solarity_rendering::m2_callback_queue_capacity(
+                    model.animations(),
+                    model.animations().bones().len(),
+                )?,
                 playback: Rc::new(RefCell::new(M2Playback::default_sequence(
                     model,
                     &self.animations,
@@ -139,19 +144,40 @@ impl TransportMapModel {
             .map(|model| Rc::clone(&model.playback))
     }
 
+    pub(super) fn callback_capacity(&self) -> (usize, usize) {
+        self.model.borrow().as_ref().map_or((0, 0), |model| {
+            (
+                model.model.animations().bones().len(),
+                model.callback_queue_capacity,
+            )
+        })
+    }
+
     /// 70B2B0 handles primary completions: Open/Close and ShipStart/ShipStop.
     pub(super) fn advance_scene(
         &self,
         scene_time_ms: f32,
         random: &mut CrtRand,
+        mut storage: Option<(
+            &solarity_cpu::CpuStorageBudget,
+            &mut crate::application::model_playback::M2CallbackScratch,
+        )>,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        self.scene_sample.borrow_mut().take();
         let current = self.model.borrow();
         let Some(current) = current.as_ref() else {
+            self.scene_sample.borrow_mut().take();
             return Ok(());
         };
+        if let Some((budget, scratch)) = &mut storage {
+            scratch.prepare(
+                budget,
+                current.model.animations().bones().len(),
+                current.callback_queue_capacity,
+            )?;
+        }
+        self.scene_sample.borrow_mut().take();
         let mut playback = current.playback.borrow_mut();
-        let advance = playback.clock_with_completion(
+        let advance = playback.clock_with_completion_storage(
             &current.model,
             scene_time_ms,
             random,
@@ -183,6 +209,7 @@ impl TransportMapModel {
                     )
                     .map(|_| ())
             }),
+            storage.map(|(budget, scratch)| scratch.bind(budget, current.callback_queue_capacity)),
         )?;
         let event_window = playback.event_window(scene_time_ms);
         *self.scene_sample.borrow_mut() = Some(GameObjectSceneSample {

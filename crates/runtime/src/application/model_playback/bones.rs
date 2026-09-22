@@ -366,16 +366,6 @@ impl M2Playback {
         Ok(())
     }
 
-    pub(in crate::application) fn clock_with_bone_completion(
-        &mut self,
-        model: &DecodedM2Model,
-        now: u32,
-        random: &mut CrtRand,
-        callback: Option<&mut M2BoneCompletionCallback<'_>>,
-    ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
-        self.clock_with_bone_callbacks(model, now, random, callback, None, None)
-    }
-
     pub(in crate::application) fn clock_with_bone_callbacks(
         &mut self,
         model: &DecodedM2Model,

@@ -412,9 +412,34 @@ fn transport_model_completes_primary_phases_without_restarting_unchanged_routes(
             .behavior()
             .is_none()
     );
+    let (bones, callbacks) = transport.callback_capacity();
+    let bytes = bones * size_of::<(u16, solarity_rendering::M2AnimationClock)>()
+        + callbacks * size_of::<solarity_rendering::M2QueuedCallback>();
+    assert!(bytes > 0);
+    let budget =
+        solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(bytes, 0, 0));
+    let refused =
+        solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(bytes - 1, 0, 0));
+    let mut scratch = crate::application::model_playback::M2CallbackScratch::default();
+    let previous_scene = objects.frame_input(Some(&world)).scene_time_ms.get();
+    let previous_random = random;
+    let previous_timer = playback.borrow().script_timer;
+    assert!(
+        objects
+            .frame_input(Some(&world))
+            .advance_scene_with_storage(1001., &mut random, Some((&refused, &mut scratch)))
+            .is_err()
+    );
+    assert_eq!(
+        objects.frame_input(Some(&world)).scene_time_ms.get(),
+        previous_scene
+    );
+    assert_eq!(playback.borrow().script_timer, previous_timer);
+    assert_eq!(random, previous_random);
+    assert_eq!(playback.borrow().animation_id, 162);
     objects
         .frame_input(Some(&world))
-        .advance_scene(1001., &mut random)?;
+        .advance_scene_with_storage(1001., &mut random, Some((&budget, &mut scratch)))?;
     assert_eq!(playback.borrow().animation_id, 163);
     let sample = transport.take_scene_sample().ok_or("completion")?;
     assert_eq!(sample.advance.expired_variations.len(), 1);
@@ -434,7 +459,7 @@ fn transport_model_completes_primary_phases_without_restarting_unchanged_routes(
     assert_eq!(playback.borrow().animation_id, 164);
     objects
         .frame_input(Some(&world))
-        .advance_scene(2002., &mut random)?;
+        .advance_scene_with_storage(2002., &mut random, Some((&budget, &mut scratch)))?;
     assert_eq!(playback.borrow().animation_id, 0);
     objects.synchronize_animations(Some(&world), &mut random)?;
     assert_eq!(playback.borrow().animation_id, 0);

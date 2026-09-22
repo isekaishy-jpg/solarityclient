@@ -568,6 +568,17 @@ impl M2Playback {
         self.clock_with_completion(model, animation_time_ms, random, None)
     }
 
+    /// Production frame clocks use the retained callback bank when bone timers are active.
+    pub(in crate::application) fn clock_with_storage(
+        &mut self,
+        model: &DecodedM2Model,
+        time: f32,
+        random: &mut CrtRand,
+        storage: M2CallbackStorage<'_>,
+    ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
+        self.clock_with_completion_storage(model, time, random, None, Some(storage))
+    }
+
     /// 830DC0 -> 82F0F0 samples existing bone timers without advancing the
     /// sequence owner, its event windows, or the CRT variation stream.
     pub(in crate::application) fn sample_clock(&self, scene_time_ms: u32) -> M2AnimationClock {
@@ -602,9 +613,20 @@ impl M2Playback {
     pub(in crate::application) fn clock_with_completion(
         &mut self,
         model: &DecodedM2Model,
+        time: f32,
+        random: &mut CrtRand,
+        callback: Option<&mut M2CompletionCallback<'_>>,
+    ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
+        self.clock_with_completion_storage(model, time, random, callback, None)
+    }
+
+    pub(in crate::application) fn clock_with_completion_storage(
+        &mut self,
+        model: &DecodedM2Model,
         animation_time_ms: f32,
         random: &mut CrtRand,
         mut callback: Option<&mut M2CompletionCallback<'_>>,
+        storage: Option<M2CallbackStorage<'_>>,
     ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
         if !self.bone_playback.is_empty() {
             let mut complete =
@@ -616,11 +638,13 @@ impl M2Playback {
                     }
                     Ok(())
                 };
-            return self.clock_with_bone_completion(
+            return self.clock_with_bone_callbacks(
                 model,
                 animation_time_ms as u32,
                 random,
                 Some(&mut complete),
+                None,
+                storage,
             );
         }
         self.scene_time_ms = animation_time_ms as u32;

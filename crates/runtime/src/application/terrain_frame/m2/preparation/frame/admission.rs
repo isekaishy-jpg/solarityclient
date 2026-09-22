@@ -433,24 +433,45 @@ impl M2Frame {
                     {
                         (advance, Some(event_window))
                     } else {
-                        let advance =
-                            if let Some(advance) = placement.passenger_playback_advance.take() {
-                                advance
-                            } else if let Some(effect) = &mut placement.unit_effect {
-                                effect.advance(
-                                    &mut playback,
-                                    &source.model,
-                                    animation_time_ms,
-                                    random,
-                                )?
-                            } else if matches!(owner, M2GpuPlacementOwner::GlueModel { .. }) {
-                                self.pending_glue_playback_advance.take().map_or_else(
-                                    || playback.clock(&source.model, animation_time_ms, random),
-                                    Ok,
-                                )?
-                            } else {
-                                playback.clock(&source.model, animation_time_ms, random)?
-                            };
+                        let advance = if let Some(advance) =
+                            placement.passenger_playback_advance.take()
+                        {
+                            advance
+                        } else if let Some(effect) = &mut placement.unit_effect {
+                            effect.advance(
+                                &mut playback,
+                                &source.model,
+                                animation_time_ms,
+                                random,
+                                Some(
+                                    self.callback_scratch
+                                        .bind(&admission.storage, source.callback_queue_capacity),
+                                ),
+                            )?
+                        } else if matches!(owner, M2GpuPlacementOwner::GlueModel { .. }) {
+                            self.pending_glue_playback_advance.take().map_or_else(
+                                || {
+                                    playback.clock_with_storage(
+                                        &source.model,
+                                        animation_time_ms,
+                                        random,
+                                        self.callback_scratch.bind(
+                                            &admission.storage,
+                                            source.callback_queue_capacity,
+                                        ),
+                                    )
+                                },
+                                Ok,
+                            )?
+                        } else {
+                            playback.clock_with_storage(
+                                &source.model,
+                                animation_time_ms,
+                                random,
+                                self.callback_scratch
+                                    .bind(&admission.storage, source.callback_queue_capacity),
+                            )?
+                        };
                         (advance, None)
                     };
                     let body_pose = placement

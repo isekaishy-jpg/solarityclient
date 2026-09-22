@@ -90,14 +90,73 @@ fn live_transition_completes_without_gpu_placement_and_preserves_shared_timer()
     let mut random = CrtRand::new();
     owner.attach_model(&world, 42, &model, None, 0, &mut random)?;
     let playback = owner.playback().ok_or("playback")?;
+    let (bones, callbacks) = owner.callback_capacity();
+    let bytes = bones * size_of::<(u16, solarity_rendering::M2AnimationClock)>()
+        + callbacks * size_of::<solarity_rendering::M2QueuedCallback>();
+    assert!(bytes > 0);
+    let budget =
+        solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(bytes, 0, 0));
+    let refused =
+        solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(bytes - 1, 0, 0));
+    let mut scratch = crate::application::model_playback::M2CallbackScratch::default();
+
     assert_eq!(owner.state(), Some(GameObjectAnimationState::Closed));
     fields(&mut world, &[(17, 0)])?;
     owner.notify(&world, GameObjectNotification::State, 100, &mut random)?;
     assert_eq!(owner.state(), Some(GameObjectAnimationState::Opening));
     assert_eq!(playback.borrow().animation_id, 148);
-    owner.advance_scene(&world, 1_100.0, &mut random)?;
+    owner.advance_scene_with_storage(
+        &world,
+        1_100.0,
+        &mut random,
+        Some((&budget, &mut scratch)),
+    )?;
     assert_eq!(owner.state(), Some(GameObjectAnimationState::Opening));
-    owner.advance_scene(&world, 1_101.0, &mut random)?;
+    let before = playback.borrow().script_timer;
+    let before_random = random;
+    let before_sample = owner
+        .scene_sample
+        .borrow()
+        .as_ref()
+        .ok_or("retained sample")?
+        .advance
+        .clock;
+    assert!(
+        owner
+            .advance_scene_with_storage(
+                &world,
+                1_101.0,
+                &mut random,
+                Some((&refused, &mut scratch))
+            )
+            .is_err()
+    );
+    assert_eq!(playback.borrow().script_timer, before);
+    assert_eq!(playback.borrow().scene_time_ms, 1_100);
+    assert_eq!(random, before_random);
+    assert_eq!(
+        owner
+            .scene_sample
+            .borrow()
+            .as_ref()
+            .ok_or("preserved sample")?
+            .advance
+            .clock,
+        before_sample
+    );
+    assert_eq!(owner.state(), Some(GameObjectAnimationState::Opening));
+    assert_eq!(
+        refused
+            .snapshot()
+            .used(solarity_cpu::CpuStorageClass::Frame),
+        0
+    );
+    owner.advance_scene_with_storage(
+        &world,
+        1_101.0,
+        &mut random,
+        Some((&budget, &mut scratch)),
+    )?;
     assert_eq!(owner.state(), Some(GameObjectAnimationState::Opened));
     assert_eq!(playback.borrow().animation_id, 149);
     let sample = owner.take_scene_sample().ok_or("scene sample")?;
@@ -116,9 +175,19 @@ fn live_transition_completes_without_gpu_placement_and_preserves_shared_timer()
     fields(&mut world, &[(17, 1)])?;
     owner.notify(&world, GameObjectNotification::State, 1_101, &mut random)?;
     assert!(!owner.state().ok_or("state")?.door_collision_eligible());
-    owner.advance_scene(&world, 2_102.0, &mut random)?;
+    owner.advance_scene_with_storage(
+        &world,
+        2_102.0,
+        &mut random,
+        Some((&budget, &mut scratch)),
+    )?;
     assert!(owner.state().ok_or("state")?.door_collision_eligible());
-    owner.advance_scene(&world, 3_102.0, &mut random)?;
+    owner.advance_scene_with_storage(
+        &world,
+        3_102.0,
+        &mut random,
+        Some((&budget, &mut scratch)),
+    )?;
     assert_eq!(
         playback
             .borrow()

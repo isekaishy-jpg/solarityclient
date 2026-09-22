@@ -206,11 +206,43 @@ pub(in crate::application) struct GameObjectFrameInput<'a> {
 }
 
 impl<'a> GameObjectFrameInput<'a> {
+    #[cfg(test)]
     pub(in crate::application) fn advance_scene(
+        self,
+        time: f32,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        self.advance_scene_with_storage(time, random, None)
+    }
+
+    pub(in crate::application) fn advance_scene_with_storage(
         self,
         scene_time_ms: f32,
         random: &mut CrtRand,
+        mut storage: Option<(
+            &solarity_cpu::CpuStorageBudget,
+            &mut crate::application::model_playback::M2CallbackScratch,
+        )>,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        // CPU-ready models can precede GPU placement. Reserve their shared scan bank
+        // before advancing the ordered object cursor, opacity, or any model timer.
+        if let Some((budget, scratch)) = &mut storage {
+            let mut bones = 0;
+            let mut callbacks = 0;
+            for instance in self.instances {
+                let demands = [
+                    instance.behavior().map(|model| model.callback_capacity()),
+                    instance
+                        .transport_model()
+                        .map(|model| model.callback_capacity()),
+                ];
+                for (model_bones, model_callbacks) in demands.into_iter().flatten() {
+                    bones = bones.max(model_bones);
+                    callbacks = callbacks.max(model_callbacks);
+                }
+            }
+            scratch.prepare(budget, bones, callbacks)?;
+        }
         self.scene_time_ms.set(scene_time_ms as u32);
         if let Some(world) = self.world {
             for instance in self.instances {
@@ -218,10 +250,23 @@ impl<'a> GameObjectFrameInput<'a> {
                     instance.opacity.advance(scene_time_ms as u32);
                 }
                 if let Some(behavior) = instance.behavior() {
-                    behavior.advance_scene(world, scene_time_ms, random)?;
+                    behavior.advance_scene_with_storage(
+                        world,
+                        scene_time_ms,
+                        random,
+                        storage
+                            .as_mut()
+                            .map(|(budget, scratch)| (*budget, &mut **scratch)),
+                    )?;
                 }
                 if let Some(model) = instance.transport_model() {
-                    model.advance_scene(scene_time_ms, random)?;
+                    model.advance_scene(
+                        scene_time_ms,
+                        random,
+                        storage
+                            .as_mut()
+                            .map(|(budget, scratch)| (*budget, &mut **scratch)),
+                    )?;
                 }
             }
         }

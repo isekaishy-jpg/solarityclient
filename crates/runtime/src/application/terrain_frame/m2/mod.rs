@@ -1321,6 +1321,7 @@ impl M2Frame {
     /// Advances the one Glue placement before its authored camera is sampled.
     pub(in crate::application) fn advance_glue_animation_clock(
         &mut self,
+        cpu: &solarity_cpu::CpuExecutor,
         animation_time_ms: f32,
         random: &mut CrtRand,
     ) -> Result<M2AnimationClock, RuntimeTerrainFrameError> {
@@ -1339,7 +1340,13 @@ impl M2Frame {
             .as_mut()
             .map(M2PlaybackStorage::borrow_mut)
             .ok_or(RuntimeTerrainFrameError::MissingGlueM2Placement)?;
-        let advance = playback.clock(&source.model, animation_time_ms, random)?;
+        let advance = playback.clock_with_storage(
+            &source.model,
+            animation_time_ms,
+            random,
+            self.callback_scratch
+                .bind(cpu.storage(), source.callback_queue_capacity),
+        )?;
         let clock = advance.clock;
         self.pending_glue_playback_advance = Some(advance);
         Ok(clock)

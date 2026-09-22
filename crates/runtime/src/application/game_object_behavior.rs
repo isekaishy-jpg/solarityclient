@@ -54,6 +54,7 @@ struct GameObjectModel {
     playback: Rc<RefCell<M2Playback>>,
     collision: Option<PlacedM2Collision>,
     collision_initialized: bool,
+    callback_queue_capacity: usize,
 }
 
 impl GameObjectBehavior {
@@ -135,6 +136,10 @@ impl GameObjectBehavior {
             playback: Rc::new(RefCell::new(playback)),
             collision: None,
             collision_initialized: false,
+            callback_queue_capacity: solarity_rendering::m2_callback_queue_capacity(
+                model.animations(),
+                model.animations().bones().len(),
+            )?,
         });
         self.synchronize_collision(placement)
     }
@@ -183,19 +188,57 @@ impl GameObjectBehavior {
     }
 
     /// Scene callbacks run for every loaded model, including unresolved placements.
+    #[cfg(test)]
     pub(in crate::application) fn advance_scene(
+        &self,
+        world: &ActiveWorld,
+        time: f32,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        self.advance_scene_with_storage(world, time, random, None)
+    }
+
+    pub(in crate::application) fn callback_capacity(&self) -> (usize, usize) {
+        self.model.borrow().as_ref().map_or((0, 0), |model| {
+            (
+                model.model.animations().bones().len(),
+                model.callback_queue_capacity,
+            )
+        })
+    }
+
+    pub(in crate::application) fn advance_scene_with_storage(
         &self,
         world: &ActiveWorld,
         scene_time_ms: f32,
         random: &mut CrtRand,
+        mut storage: Option<(
+            &solarity_cpu::CpuStorageBudget,
+            &mut crate::application::model_playback::M2CallbackScratch,
+        )>,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        self.scene_sample.borrow_mut().take();
         let model = self.model.borrow();
         let Some(model) = model.as_ref() else {
+            self.scene_sample.borrow_mut().take();
             return Ok(());
         };
+        if let Some((budget, scratch)) = &mut storage {
+            scratch.prepare(
+                budget,
+                model.model.animations().bones().len(),
+                model.callback_queue_capacity,
+            )?;
+        }
+        self.scene_sample.borrow_mut().take();
         let mut playback = model.playback.borrow_mut();
-        let advance = self.advance(world, &model.model, &mut playback, scene_time_ms, random)?;
+        let advance = self.advance(
+            world,
+            &model.model,
+            &mut playback,
+            scene_time_ms,
+            random,
+            storage.map(|(budget, scratch)| scratch.bind(budget, model.callback_queue_capacity)),
+        )?;
         let event_window = playback.event_window(scene_time_ms);
         *self.scene_sample.borrow_mut() = Some(GameObjectSceneSample {
             advance,
@@ -280,15 +323,17 @@ impl GameObjectBehavior {
     }
 
     /// The callback mutates the same state later read by collision eligibility.
-    pub(in crate::application) fn advance(
+    #[allow(clippy::too_many_arguments)]
+    fn advance(
         &self,
         world: &ActiveWorld,
         model: &DecodedM2Model,
         playback: &mut M2Playback,
         scene_time_ms: f32,
         random: &mut CrtRand,
+        storage: Option<crate::application::model_playback::M2CallbackStorage<'_>>,
     ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
-        playback.clock_with_completion(
+        playback.clock_with_completion_storage(
             model,
             scene_time_ms,
             random,
@@ -319,6 +364,7 @@ impl GameObjectBehavior {
                     )
                 }
             }),
+            storage,
         )
     }
 

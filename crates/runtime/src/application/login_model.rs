@@ -1243,7 +1243,7 @@ impl RuntimeGlueModelScene {
         let animation_time_ms = active.frame.animation_time_ms();
         let clock = active
             .frame
-            .advance_glue_animation_clock(animation_time_ms, random)?;
+            .advance_glue_animation_clock(cpu, animation_time_ms, random)?;
         let (camera, effect_scale) = sample_m2_ui_camera_frame(
             active.model.animations(),
             active.environment.camera,

@@ -35,7 +35,11 @@ impl M2Frame {
             terrain.prepare_world_scene(camera)?;
         }
         if let Some(game_objects) = game_objects {
-            game_objects.advance_scene(animation_time_ms, random)?;
+            game_objects.advance_scene_with_storage(
+                animation_time_ms,
+                random,
+                Some((cpu.storage(), &mut self.callback_scratch)),
+            )?;
         }
         self.advance_retired_models(animation_time_ms as u32, game_objects);
         self.visible_draws.clear();

@@ -578,7 +578,13 @@ impl M2Frame {
                 let advance = if let Some(advance) = placement.passenger_playback_advance.take() {
                     advance
                 } else if let Some(effect) = &mut placement.unit_effect {
-                    effect.advance(&mut playback, &source.model, animation_time_ms, random)?
+                    effect.advance(
+                        &mut playback,
+                        &source.model,
+                        animation_time_ms,
+                        random,
+                        None,
+                    )?
                 } else if matches!(owner, M2GpuPlacementOwner::GlueModel { .. }) {
                     self.pending_glue_playback_advance.take().map_or_else(
                         || playback.clock(&source.model, animation_time_ms, random),
