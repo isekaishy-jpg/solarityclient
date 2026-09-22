@@ -37,7 +37,7 @@ impl<T: Send + 'static> LoadBatch<T> {
     pub fn start_after(
         &mut self,
         cpu: &CpuExecutor,
-        jobs: &mut Vec<T>,
+        jobs: &mut impl crate::BatchInputs<T>,
         dependencies: &[ReadyToken],
     ) -> Result<(), CpuError> {
         self.batch.start_graph(
@@ -57,7 +57,7 @@ impl<T: Send + 'static> LoadBatch<T> {
         &mut self,
         cpu: &CpuExecutor,
         template: &FrameGraphTemplate,
-        jobs: &mut Vec<T>,
+        jobs: &mut impl crate::BatchInputs<T>,
         dependencies: &[ReadyToken],
     ) -> Result<(), CpuError> {
         self.batch.start_graph(cpu, template, jobs, dependencies)
@@ -70,7 +70,7 @@ impl<T: Send + 'static> LoadBatch<T> {
         &mut self,
         cpu: &CpuExecutor,
         template: &FrameGraphTemplate,
-        jobs: &mut Vec<T>,
+        jobs: &mut impl crate::BatchInputs<T>,
         dependencies: &[ReadyToken],
         costs: &[crate::JobCost],
     ) -> Result<(), CpuError> {
@@ -141,5 +141,12 @@ impl<T: Send + 'static> LoadBatch<T> {
     /// Reports terminal failure after returning inputs, or rejects an unfinished worker wait.
     pub fn reclaim(&mut self, jobs: &mut Vec<T>) -> Result<(), CpuError> {
         self.batch.reclaim(jobs)
+    }
+
+    /// Returns inputs to an admitted destination without implicitly growing it.
+    /// # Errors
+    /// Destination refusal preserves every input for retry; terminal failures return all inputs.
+    pub fn reclaim_into(&mut self, jobs: &mut impl crate::OutputBuffer<T>) -> Result<(), CpuError> {
+        self.batch.reclaim_into(jobs)
     }
 }

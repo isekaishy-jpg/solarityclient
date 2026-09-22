@@ -75,7 +75,11 @@ impl<T: Send + 'static> FrameBatch<T> {
     /// Reserves a known independent phase before transferring inputs.
     /// # Errors
     /// Admission, epoch exhaustion and storage errors preserve `jobs`.
-    pub fn start(&mut self, cpu: &CpuExecutor, jobs: &mut Vec<T>) -> Result<(), CpuError> {
+    pub fn start(
+        &mut self,
+        cpu: &CpuExecutor,
+        jobs: &mut impl crate::BatchInputs<T>,
+    ) -> Result<(), CpuError> {
         self.start_graph(cpu, &FrameGraphTemplate::independent(jobs.len()), jobs, &[])
     }
 

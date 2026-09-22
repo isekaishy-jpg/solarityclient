@@ -115,7 +115,7 @@ impl<T: Send + 'static> FrameBatch<T> {
         &mut self,
         cpu: &CpuExecutor,
         template: &FrameGraphTemplate,
-        jobs: &mut Vec<T>,
+        jobs: &mut impl crate::BatchInputs<T>,
         dependencies: &[ReadyToken],
     ) -> Result<(), CpuError> {
         self.start_costed_graph(cpu, template, jobs, dependencies, &[])
@@ -130,7 +130,7 @@ impl<T: Send + 'static> FrameBatch<T> {
         &mut self,
         cpu: &CpuExecutor,
         template: &FrameGraphTemplate,
-        jobs: &mut Vec<T>,
+        jobs: &mut impl crate::BatchInputs<T>,
         dependencies: &[ReadyToken],
         costs: &[crate::JobCost],
     ) -> Result<(), CpuError> {
@@ -142,7 +142,7 @@ impl<T: Send + 'static> FrameBatch<T> {
         }
         self.begin_dependencies(cpu, template.plan, dependencies)?;
         let mut state = self.core.lock();
-        for (node, job) in jobs.drain(..).enumerate() {
+        for (node, job) in jobs.drain_inputs().enumerate() {
             state.append(
                 Some(job),
                 costs.get(node).copied().unwrap_or_default(),

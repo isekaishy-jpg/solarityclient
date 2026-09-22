@@ -1,7 +1,7 @@
 //! Typed domain tables retain their actual allocation admission through ownership transfers.
 
 use crate::{AssetError, AssetReadBudget};
-use solarity_cpu::{ByteReservation, CpuError, CpuStorageKind};
+use solarity_cpu::{ByteReservation, CpuError, CpuStorageKind, CpuStorageReservation};
 use std::{collections::hash_map::RandomState, hash::Hash, ops::Deref};
 
 type Map<K, V> = hashbrown::HashMap<K, V, RandomState>;
@@ -42,9 +42,11 @@ impl<K: Eq + Hash, V> AssetStorageMap<K, V> {
         self.values.remove_entry(key)
     }
     /// Publishes into capacity admitted before a multi-container metadata transition.
-    pub(crate) fn insert_reserved(&mut self, key: K, value: V) {
+    /// # Panics
+    /// Panics if a new key would exceed the admitted capacity.
+    pub fn insert_reserved(&mut self, key: K, value: V) -> Option<V> {
         assert!(self.values.contains_key(&key) || self.values.len() < self.values.capacity());
-        self.values.insert(key, value);
+        self.values.insert(key, value)
     }
     /// Removes an entry while retaining admitted table capacity for reuse.
     pub fn remove(&mut self, key: &K) -> Option<V> {
@@ -63,6 +65,76 @@ impl<K: Eq + Hash, V> AssetStorageMap<K, V> {
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
         self.values.values_mut()
     }
+    /// Clears entries while retaining the charged allocation for the next frame.
+    pub fn clear_retaining_capacity(&mut self) {
+        self.values.clear();
+    }
+
+    /// Plans adoption and replacement before a connected group changes any storage.
+    /// # Errors
+    /// Returns overflow without changing entries or their backing allocation.
+    pub fn reservation_bytes(
+        &self,
+        budget: &AssetReadBudget,
+        capacity: usize,
+    ) -> Result<usize, CpuError> {
+        let adoption = self
+            .memory
+            .as_ref()
+            .map_or(self.values.allocation_size(), |memory| {
+                memory.admission_bytes(budget.storage(), budget.class())
+            });
+        let replacement = if capacity > self.values.capacity() {
+            table_bound::<(K, V)>(capacity)?
+        } else {
+            0
+        };
+        adoption
+            .checked_add(replacement)
+            .ok_or(CpuError::StorageSizeOverflow)
+    }
+    /// Charge released after a replacement takes ownership of all entries.
+    #[must_use]
+    pub fn replacement_credit(&self, capacity: usize) -> usize {
+        if capacity > self.values.capacity() {
+            self.values.allocation_size()
+        } else {
+            0
+        }
+    }
+    /// Funds table adoption and peak-safe replacement from a connected reservation.
+    /// # Errors
+    /// Refusal preserves entries; an admitted adoption may precede a failed allocation.
+    pub fn reserve_reserved(
+        &mut self,
+        reservation: &mut CpuStorageReservation,
+        capacity: usize,
+    ) -> Result<(), CpuError> {
+        if let Some(memory) = &mut self.memory {
+            memory.transfer_reserved(reservation, self.kind)?;
+        } else if self.values.allocation_size() != 0 {
+            self.memory = Some(reservation.reserve(self.kind, self.values.allocation_size())?);
+        }
+        self.policy = Some(AssetReadBudget::for_class(
+            reservation.storage().clone(),
+            reservation.class(),
+        ));
+        if capacity > self.values.capacity() {
+            let mut memory = reservation.reserve(self.kind, table_bound::<(K, V)>(capacity)?)?;
+            let mut replacement = Map::with_hasher(self.values.hasher().clone());
+            replacement
+                .try_reserve(capacity)
+                .map_err(|_| CpuError::StorageAllocation)?;
+            memory.resize_reserved(reservation, replacement.allocation_size())?;
+            replacement.extend(self.values.drain());
+            drop(std::mem::replace(&mut self.values, replacement));
+            if let Some(retired) = self.memory.replace(memory) {
+                reservation.recycle(retired)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Releases values and their backing allocation before dropping admission.
     pub fn clear(&mut self) {
         *self = Self {

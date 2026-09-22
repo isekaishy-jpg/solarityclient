@@ -18,6 +18,12 @@ impl GeometryBatch {
             .ok_or(CpuError::StorageSizeOverflow)?;
         let spares = maximum.max(self.spare_chunks.len());
         let mut plan = CpuStorageWorkingSet::default();
+        let reuse_count = self.jobs.len();
+        let policy = solarity_asset::AssetReadBudget::for_class(budget.clone(), Class::Frame);
+        plan.include(
+            self.reuse.heads.reservation_bytes(&policy, reuse_count)?,
+            self.reuse.heads.replacement_credit(reuse_count),
+        )?;
         plan.include(
             self.jobs.reservation_bytes(budget, Class::Frame, jobs)?,
             self.jobs.replacement_credit(jobs),
@@ -33,6 +39,9 @@ impl GeometryBatch {
             self.returned_chunks.replacement_credit(maximum),
         )?;
         let mut reservation = budget.reserve_working_set(Class::Frame, plan.bytes())?;
+        self.reuse
+            .heads
+            .reserve_reserved(&mut reservation, reuse_count)?;
         self.jobs
             .reserve_reserved(&mut reservation, Kind::Metadata, jobs)?;
         self.spare_chunks

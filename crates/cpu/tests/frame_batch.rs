@@ -381,3 +381,39 @@ fn admitted_reclamation_preserves_inputs_on_destination_pressure() -> Result<(),
     assert_eq!(&*output, &[11]);
     Ok(())
 }
+
+#[test]
+fn admitted_inputs_preserve_storage_through_refusal_execution_and_return()
+-> Result<(), Box<dyn Error>> {
+    use solarity_cpu::{
+        CpuBuffer, CpuStorageClass as Class, CpuStorageKind as Kind, FrameGraphTemplate,
+    };
+    let mut cpu = executor()?;
+    let mut jobs = CpuBuffer::<usize>::default();
+    jobs.reserve(cpu.storage(), Class::Frame, Kind::Result, 3)?;
+    jobs.extend_from_slice(&[3, 5, 7])?;
+    let address = jobs.as_ptr();
+    let mut batch = FrameBatch::new(|value| *value += 10);
+    let storage = cpu.storage().snapshot().used(Class::Frame);
+    assert!(matches!(
+        batch.start_graph(&cpu, &FrameGraphTemplate::independent(2), &mut jobs, &[]),
+        Err(CpuError::GraphInputCount)
+    ));
+    assert_eq!(&*jobs, &[3, 5, 7]);
+    assert_eq!(jobs.as_ptr(), address);
+    assert_eq!(cpu.storage().snapshot().used(Class::Frame), storage);
+    for step in 1..=8 {
+        batch.start(&cpu, &mut jobs)?;
+        assert!(jobs.is_empty());
+        assert_eq!(jobs.as_ptr(), address);
+        batch.reclaim_into(&mut jobs.writer())?;
+        assert_eq!(&*jobs, &[3 + 10 * step, 5 + 10 * step, 7 + 10 * step]);
+        assert_eq!(jobs.as_ptr(), address);
+    }
+    drop((jobs, batch));
+    cpu.shutdown()?;
+    let budget = cpu.storage().clone();
+    drop(cpu);
+    assert_eq!(budget.snapshot().used(Class::Frame), 0);
+    Ok(())
+}

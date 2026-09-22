@@ -13,9 +13,9 @@ mod synchronization;
 
 pub use job::{JobContext, JobIdentity};
 pub use storage::{
-    ByteReservation, CpuBuffer, CpuOwnedCell, CpuResultLease, CpuResultPage, CpuStorageBudget,
-    CpuStorageClass, CpuStorageKind, CpuStoragePlan, CpuStorageReservation, CpuStorageSnapshot,
-    CpuStorageWorkingSet, FixedWriter, OutputBuffer,
+    BatchInputs, ByteReservation, CpuBuffer, CpuOwnedCell, CpuResultLease, CpuResultPage,
+    CpuStorageBudget, CpuStorageClass, CpuStorageKind, CpuStoragePlan, CpuStorageReservation,
+    CpuStorageSnapshot, CpuStorageWorkingSet, FixedWriter, OutputBuffer,
 };
 pub use storage::{CpuScratch, CpuWorkerScratch, ScratchScope};
 

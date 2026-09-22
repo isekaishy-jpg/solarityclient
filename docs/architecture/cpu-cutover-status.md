@@ -538,6 +538,35 @@ warnings denied, formatting and `git diff --check` pass. Logs are
 `target/frame-metadata-cpu-tests.log`, `target/frame-metadata-runtime-tests.log`
 and `target/frame-metadata-clippy.log`. Build 176 remains installed.
 
+The next frame-input batch includes the generation/demand reuse table in the
+same connected geometry reservation as its return arrays. It uses the existing
+admitted hash table, preserves duplicate-placement lists and retains charged
+backing across index resets. Hash-table adoption, replacement and actual-size
+reconciliation now accept a protected working set; the old allocation is recycled
+only after entries move and its backing is freed.
+
+Frame and loading batch admission accept charged CPU buffers directly through a
+sealed input boundary. Scheduler admission still precedes draining, and return
+writers retain the original backing on success, failure and refusal/retry.
+Spatial staging now reserves jobs, placement indices, costs and result handles as
+one connected group before capturing scene inputs. Discovered late poses use a
+charged input/return buffer instead of a growable Vec. This closes these backing
+allocations without changing calibrated group widths, callback order, model reuse
+identity or the central scheduler. Other pose/receiver metadata, nested pose
+inputs and aggregate all-model working sets remain required. Build 176 remains
+installed; no packaged client build or FPS comparison accompanies these changes.
+
+Grouped validation passes 384 CPU/asset tests and 125 M2 runtime tests, with 11
+existing ignores in total. New coverage checks unchanged input storage through
+graph refusal and repeated worker returns, table transfer/replacement accounting
+and 1,000 warm resets, and connected spatial refusal before any array grows.
+Existing moving-emitter, duplicate-placement, source-retirement and frame-parity
+checks pass. One existing scheduling test needed an explicit Vec collection type
+after the batch-input API accepted two container types. Final all-target/all-feature
+CPU/asset/runtime Clippy with warnings denied, formatting and diff checks pass.
+Logs: `target/frame-inputs-tests-final.log`, `target/frame-inputs-runtime.log`
+and `target/frame-inputs-clippy.log`.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases

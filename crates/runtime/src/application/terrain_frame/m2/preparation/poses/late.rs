@@ -8,7 +8,7 @@ use solarity_rendering::{M2AnimationClock, M2BonePose, M2BonePoseOverrides, M2Bo
 
 /// One ordered consumer can be suspended; reusable buffers do not pin its source after the frame.
 pub(in crate::application::terrain_frame::m2) struct LatePose {
-    jobs: Vec<PoseJob>,
+    jobs: solarity_cpu::CpuBuffer<PoseJob>,
     pending: FrameBatch<PoseJob>,
     calibration: solarity_cpu::CostCalibration,
     active: bool,
@@ -18,7 +18,7 @@ pub(in crate::application::terrain_frame::m2) struct LatePose {
 impl Default for LatePose {
     fn default() -> Self {
         Self {
-            jobs: Vec::new(),
+            jobs: solarity_cpu::CpuBuffer::default(),
             pending: FrameBatch::with_context(PoseJob::execute),
             calibration: solarity_cpu::CostCalibration::default(),
             active: false,
@@ -43,9 +43,15 @@ impl LatePose {
         if self.active {
             return Err(solarity_cpu::CpuError::BatchActive.into());
         }
+        self.jobs.reserve(
+            cpu.storage(),
+            solarity_cpu::CpuStorageClass::Frame,
+            solarity_cpu::CpuStorageKind::Result,
+            1,
+        )?;
         if self.jobs.is_empty() {
             self.jobs
-                .push(PoseJob::new(ResourceLease::clone(&source.model)));
+                .push(PoseJob::new(ResourceLease::clone(&source.model)))?;
         }
         let job = &mut self.jobs[0];
         job.prepare(
@@ -97,9 +103,9 @@ impl LatePose {
             return Ok(());
         }
         let readiness = self.wait(wait);
-        let result = self.pending.reclaim(&mut self.jobs);
+        let result = self.pending.reclaim_into(&mut self.jobs.writer());
         self.active = false;
-        for job in &mut self.jobs {
+        for job in self.jobs.iter_mut() {
             self.calibration.record(&mut job.measurement);
         }
         readiness?;
@@ -108,7 +114,7 @@ impl LatePose {
     }
     pub(in crate::application::terrain_frame::m2) fn release_model(&mut self) {
         debug_assert!(!self.active);
-        for job in &mut self.jobs {
+        for job in self.jobs.iter_mut() {
             job.release_model();
         }
     }

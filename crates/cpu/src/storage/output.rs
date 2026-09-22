@@ -68,7 +68,7 @@ impl<T> CpuBuffer<T> {
         self.values.clear();
     }
     /// Moves values out in publication order without giving away the allocation.
-    pub fn drain(&mut self) -> impl ExactSizeIterator<Item = T> + '_ {
+    pub fn drain(&mut self) -> std::vec::Drain<'_, T> {
         self.values.drain(..)
     }
     /// Returns the last value while retaining its admitted backing storage.
@@ -249,5 +249,40 @@ impl<T> OutputBuffer<T> for Vec<T> {
     }
     fn truncate(&mut self, length: usize) {
         Vec::truncate(self, length);
+    }
+}
+
+mod sealed {
+    pub trait BatchInputs {}
+    impl<T> BatchInputs for Vec<T> {}
+    impl<T> BatchInputs for super::CpuBuffer<T> {}
+}
+
+/// Owned batch inputs retain their backing allocation while jobs run on workers.
+/// Only built-in containers implement this boundary; draining invokes no domain callback.
+pub trait BatchInputs<T>: sealed::BatchInputs {
+    /// Number of inputs to admit before any ownership transfer.
+    fn len(&self) -> usize;
+    /// Whether this phase has no inputs.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    /// Transfers inputs in publication order without freeing their backing allocation.
+    fn drain_inputs(&mut self) -> std::vec::Drain<'_, T>;
+}
+impl<T> BatchInputs<T> for Vec<T> {
+    fn len(&self) -> usize {
+        Vec::len(self)
+    }
+    fn drain_inputs(&mut self) -> std::vec::Drain<'_, T> {
+        self.drain(..)
+    }
+}
+impl<T> BatchInputs<T> for CpuBuffer<T> {
+    fn len(&self) -> usize {
+        self.values.len()
+    }
+    fn drain_inputs(&mut self) -> std::vec::Drain<'_, T> {
+        self.drain()
     }
 }

@@ -279,6 +279,16 @@ pub struct CpuStorageReservation {
     memory: ByteReservation,
 }
 impl CpuStorageReservation {
+    /// Ledger which owns this connected working set.
+    #[must_use]
+    pub fn storage(&self) -> &CpuStorageBudget {
+        &self.memory.budget
+    }
+    /// Admission class shared by all allocations funded by this working set.
+    #[must_use]
+    pub const fn class(&self) -> CpuStorageClass {
+        self.memory.class
+    }
     /// Capacity still available to this transaction, already held against its class limit.
     #[must_use]
     pub const fn remaining(&self) -> usize {

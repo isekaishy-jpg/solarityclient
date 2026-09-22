@@ -232,7 +232,7 @@ fn required_service_still_alternates_with_heavy_frame_work_on_one_worker()
     frame.start_costed_graph(
         &cpu,
         &FrameGraphTemplate::independent(3),
-        &mut (0..3).map(|id| (send.clone(), id)).collect(),
+        &mut (0..3).map(|id| (send.clone(), id)).collect::<Vec<_>>(),
         &[],
         &[cost(500); 3],
     )?;

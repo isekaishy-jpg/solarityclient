@@ -12,7 +12,7 @@ mod worker_scratch;
 pub use budget::{ByteReservation, CpuStorageBudget, CpuStorageReservation, CpuStorageWorkingSet};
 pub(crate) use buffer::{StorageDeque, StorageVec};
 pub use cell::CpuOwnedCell;
-pub use output::{CpuBuffer, FixedWriter, OutputBuffer};
+pub use output::{BatchInputs, CpuBuffer, FixedWriter, OutputBuffer};
 pub use result::{CpuResultLease, CpuResultPage};
 pub use scratch::{CpuScratch, ScratchScope};
 pub use types::{CpuStorageClass, CpuStorageKind, CpuStoragePlan, CpuStorageSnapshot};

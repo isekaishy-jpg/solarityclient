@@ -5,7 +5,7 @@ use super::job::{MAX_ENTRIES, Results, SpatialJob};
 use crate::application::frame_pipeline::FrameWait;
 use crate::application::terrain_frame::m2::RuntimeTerrainFrameError;
 use solarity_cpu::{
-    ByteReservation, CostCalibration, CpuBuffer, CpuError, CpuExecutor, CpuStorageClass as Class,
+    CostCalibration, CpuBuffer, CpuError, CpuExecutor, CpuStorageClass as Class,
     CpuStorageKind as Kind, FrameBatch, FrameGraphTemplate, FrameJob, FramePriority, JobCost,
 };
 use std::time::Duration;
@@ -13,8 +13,7 @@ use std::time::Duration;
 /// Current frame inputs never borrow simulation. Only one group's returned
 /// values need a consumption buffer; all storage is reused after reclamation.
 pub(in crate::application::terrain_frame::m2) struct SpatialBatch {
-    jobs: Vec<SpatialJob>,
-    job_memory: Option<ByteReservation>,
+    jobs: CpuBuffer<SpatialJob>,
     indices: CpuBuffer<usize>,
     costs: CpuBuffer<JobCost>,
     handles: CpuBuffer<FrameJob<SpatialJob>>,
@@ -29,8 +28,7 @@ pub(in crate::application::terrain_frame::m2) struct SpatialBatch {
 impl Default for SpatialBatch {
     fn default() -> Self {
         Self {
-            jobs: Vec::new(),
-            job_memory: None,
+            jobs: CpuBuffer::default(),
             indices: CpuBuffer::default(),
             costs: CpuBuffer::default(),
             handles: CpuBuffer::default(),
@@ -59,39 +57,50 @@ impl SpatialBatch {
             .unwrap_or(MAX_ENTRIES)
             .min(MAX_ENTRIES);
         let groups = maximum.div_ceil(self.width);
-        self.indices
-            .reserve(cpu.storage(), Class::Frame, Kind::Metadata, maximum)?;
-        self.costs
-            .reserve(cpu.storage(), Class::Frame, Kind::Metadata, groups)?;
-        self.handles
-            .reserve(cpu.storage(), Class::Frame, Kind::Metadata, groups)?;
-        if let Some(memory) = &mut self.job_memory {
-            memory.transfer(cpu.storage(), Class::Frame, Kind::Result)?;
-        }
-        if groups > self.jobs.capacity() {
-            let bytes = groups
-                .checked_mul(std::mem::size_of::<SpatialJob>())
-                .ok_or(CpuError::StorageSizeOverflow)?;
-            let mut memory = cpu.storage().reserve(Class::Frame, Kind::Result, bytes)?;
-            let mut replacement = Vec::new();
-            replacement
-                .try_reserve_exact(groups)
-                .map_err(|_| CpuError::StorageAllocation)?;
-            memory.resize(
-                replacement
-                    .capacity()
-                    .checked_mul(std::mem::size_of::<SpatialJob>())
-                    .ok_or(CpuError::StorageSizeOverflow)?,
-            )?;
-            replacement.append(&mut self.jobs);
-            self.jobs = replacement;
-            self.job_memory = Some(memory);
-        }
+        self.reserve_storage(cpu.storage(), maximum, groups)?;
         self.indices.clear();
         self.costs.clear();
         self.handles.clear();
         self.cursor = 0;
         self.loaded_group = None;
+        Ok(())
+    }
+
+    /// Protect all staging and return arrays before scene inputs are captured.
+    fn reserve_storage(
+        &mut self,
+        budget: &solarity_cpu::CpuStorageBudget,
+        maximum: usize,
+        groups: usize,
+    ) -> Result<(), CpuError> {
+        let mut plan = solarity_cpu::CpuStorageWorkingSet::default();
+        plan.include(
+            self.indices
+                .reservation_bytes(budget, Class::Frame, maximum)?,
+            self.indices.replacement_credit(maximum),
+        )?;
+        plan.include(
+            self.costs.reservation_bytes(budget, Class::Frame, groups)?,
+            self.costs.replacement_credit(groups),
+        )?;
+        plan.include(
+            self.handles
+                .reservation_bytes(budget, Class::Frame, groups)?,
+            self.handles.replacement_credit(groups),
+        )?;
+        plan.include(
+            self.jobs.reservation_bytes(budget, Class::Frame, groups)?,
+            self.jobs.replacement_credit(groups),
+        )?;
+        let mut reservation = budget.reserve_working_set(Class::Frame, plan.bytes())?;
+        self.indices
+            .reserve_reserved(&mut reservation, Kind::Metadata, maximum)?;
+        self.costs
+            .reserve_reserved(&mut reservation, Kind::Metadata, groups)?;
+        self.handles
+            .reserve_reserved(&mut reservation, Kind::Metadata, groups)?;
+        self.jobs
+            .reserve_reserved(&mut reservation, Kind::Result, groups)?;
         Ok(())
     }
 
@@ -105,7 +114,7 @@ impl SpatialBatch {
         let group = self.indices.len() / self.width;
         let slot = self.indices.len() % self.width;
         if group == self.jobs.len() {
-            self.jobs.push(SpatialJob::new(view));
+            self.jobs.push(SpatialJob::new(view))?;
         }
         let job = &mut self.jobs[group];
         if slot == 0 {
@@ -125,7 +134,7 @@ impl SpatialBatch {
         cpu: &CpuExecutor,
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.jobs.truncate(self.indices.len().div_ceil(self.width));
-        for job in &mut self.jobs {
+        for job in self.jobs.iter_mut() {
             job.measurement = self.calibration.prepare(job.count);
             self.costs.push(job.measurement.cost())?;
         }
@@ -212,8 +221,8 @@ impl SpatialBatch {
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.pending.close();
         let readiness = wait.before_reclaim(&self.pending);
-        let result = self.pending.reclaim(&mut self.jobs);
-        for job in &mut self.jobs {
+        let result = self.pending.reclaim_into(&mut self.jobs.writer());
+        for job in self.jobs.iter_mut() {
             self.calibration.record(&mut job.measurement);
             for result in &mut job.results {
                 *result = None;
@@ -235,6 +244,53 @@ impl SpatialBatch {
         wait: &mut FrameWait<'_>,
     ) -> Result<(), RuntimeTerrainFrameError> {
         wait.before_reclaim(&self.pending)?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+    #[test]
+    fn m2_spatial_connected_storage_refuses_before_any_array_grows() -> Result<(), CpuError> {
+        let maximum = 40;
+        let groups = 2;
+        let bytes = maximum * size_of::<usize>()
+            + groups
+                * (size_of::<JobCost>()
+                    + size_of::<FrameJob<SpatialJob>>()
+                    + size_of::<SpatialJob>());
+        let denied =
+            solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(bytes - 1, 0, 0));
+        let mut batch = SpatialBatch::default();
+        assert!(batch.reserve_storage(&denied, maximum, groups).is_err());
+        assert_eq!(batch.jobs.capacity(), 0);
+        assert_eq!(batch.indices.capacity(), 0);
+        assert_eq!(batch.costs.capacity(), 0);
+        assert_eq!(batch.handles.capacity(), 0);
+        assert_eq!(denied.snapshot().used(Class::Frame), 0);
+        let budget =
+            solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(bytes, 0, 0));
+        batch.reserve_storage(&budget, maximum, groups)?;
+        let pointers = (
+            batch.jobs.as_ptr(),
+            batch.indices.as_ptr(),
+            batch.costs.as_ptr(),
+            batch.handles.as_ptr(),
+        );
+        batch.reserve_storage(&budget, maximum, groups)?;
+        assert_eq!(
+            pointers,
+            (
+                batch.jobs.as_ptr(),
+                batch.indices.as_ptr(),
+                batch.costs.as_ptr(),
+                batch.handles.as_ptr()
+            )
+        );
+        assert_eq!(budget.snapshot().used(Class::Frame), bytes);
+        drop(batch);
+        assert_eq!(budget.snapshot().used(Class::Frame), 0);
         Ok(())
     }
 }

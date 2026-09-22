@@ -38,6 +38,13 @@ fn moving_emitter_keeps_one_large_output_allocation() -> Result<(), Box<dyn Erro
     ));
     let mut jobs = owners(&budget, 32)?;
     let mut reuse = GeometryReuse::default();
+    reuse.heads.reserve(
+        Some(&solarity_asset::AssetReadBudget::for_class(
+            budget.clone(),
+            Class::Frame,
+        )),
+        32,
+    )?;
     let mut retained = 0;
     for frame in 0..256 {
         reuse.index(&mut jobs);
@@ -65,7 +72,7 @@ fn moving_emitter_keeps_one_large_output_allocation() -> Result<(), Box<dyn Erro
         }
         assert_eq!(used, retained, "frame {frame} changed only traversal order");
     }
-    drop(jobs);
+    drop((jobs, reuse));
     assert_eq!(budget.snapshot().used(Class::Frame), 0);
     Ok(())
 }
@@ -83,6 +90,13 @@ fn changed_demand_and_generation_retire_unmatched_storage() -> Result<(), Box<dy
     let mut jobs = owners(&budget, 3)?;
     jobs.push(job)?;
     let mut reuse = GeometryReuse::default();
+    reuse.heads.reserve(
+        Some(&solarity_asset::AssetReadBudget::for_class(
+            budget.clone(),
+            Class::Frame,
+        )),
+        1,
+    )?;
     reuse.index(&mut jobs);
     let shadow = reuse.take(&identity(7, false), &mut jobs, &budget)?;
     assert_eq!(jobs[shadow].job().particle_indices.capacity(), 0);
@@ -96,7 +110,7 @@ fn changed_demand_and_generation_retire_unmatched_storage() -> Result<(), Box<dy
     reuse.clear();
     assert_eq!(budget.snapshot().bytes(Class::Frame, Kind::Result), 0);
     assert_eq!(completed.len(), 2);
-    drop((completed, jobs));
+    drop((completed, jobs, reuse));
     assert_eq!(budget.snapshot().used(Class::Frame), 0);
     Ok(())
 }
@@ -112,6 +126,13 @@ fn duplicate_source_placements_reuse_each_slot_once() -> Result<(), Box<dyn Erro
         jobs.push(owner)?;
     }
     let mut reuse = GeometryReuse::default();
+    reuse.heads.reserve(
+        Some(&solarity_asset::AssetReadBudget::for_class(
+            budget.clone(),
+            Class::Frame,
+        )),
+        1,
+    )?;
     reuse.index(&mut jobs);
     let mut slots = Vec::new();
     for _ in 0..4 {
@@ -135,6 +156,14 @@ fn rejected_record_transfer_preserves_the_reusable_owner() -> Result<(), Box<dyn
     let mut jobs = owners(&source, 1)?;
     jobs.push(owner)?;
     let mut reuse = GeometryReuse::default();
+    let index_budget = CpuStorageBudget::new(CpuStoragePlan::new(4096, 0, 0));
+    reuse.heads.reserve(
+        Some(&solarity_asset::AssetReadBudget::for_class(
+            index_budget,
+            Class::Frame,
+        )),
+        1,
+    )?;
     reuse.index(&mut jobs);
     assert!(reuse.take(&identity(7, true), &mut jobs, &denied).is_err());
     assert_eq!(jobs.len(), 1);

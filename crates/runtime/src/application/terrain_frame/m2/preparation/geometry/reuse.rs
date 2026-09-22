@@ -2,12 +2,13 @@
 
 use super::super::super::{M2GpuSource, M2GpuSourceData};
 use super::{GeometryInput, GeometryOwner};
-use std::{collections::HashMap, sync::Weak};
+use solarity_asset::AssetStorageMap;
+use std::sync::Weak;
 
 /// Different visible/shadow demands must not spread particle capacities into
 /// shadow-only jobs as models move across the camera's admission boundary.
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
-struct ReuseKey {
+pub(super) struct ReuseKey {
     generation: usize,
     visible: bool,
     shadows: bool,
@@ -34,25 +35,31 @@ impl GeometryReuseIdentity {
     }
 }
 
-/// Intrusive lists reuse the existing job Vec and a warmed hash table. Only the
+/// Intrusive lists reuse the existing job buffer and a warmed hash table. Only the
 /// previous admitted frame is indexed; unused jobs retire at phase reclamation.
-#[derive(Default)]
 pub(super) struct GeometryReuse {
-    heads: HashMap<ReuseKey, usize>,
+    pub(super) heads: AssetStorageMap<ReuseKey, usize>,
+}
+impl Default for GeometryReuse {
+    fn default() -> Self {
+        Self {
+            heads: AssetStorageMap::metadata(),
+        }
+    }
 }
 
 impl GeometryReuse {
     /// Effect state has already returned to placements. Index only completed
     /// jobs, without moving their output allocations or retaining source payloads.
     pub(super) fn index(&mut self, jobs: &mut [GeometryOwner]) {
-        self.heads.clear();
+        self.heads.clear_retaining_capacity();
         for (index, owner) in jobs.iter_mut().enumerate() {
             let job = owner.job_mut();
             debug_assert!(!job.owns_effects);
             job.next_reuse = job
                 .reuse_identity
                 .as_ref()
-                .and_then(|identity| self.heads.insert(identity.key, index));
+                .and_then(|identity| self.heads.insert_reserved(identity.key, index));
         }
     }
 
@@ -64,16 +71,14 @@ impl GeometryReuse {
         jobs: &mut solarity_cpu::CpuBuffer<GeometryOwner>,
         budget: &solarity_cpu::CpuStorageBudget,
     ) -> Result<usize, solarity_cpu::CpuError> {
-        if let std::collections::hash_map::Entry::Occupied(mut head) =
-            self.heads.entry(identity.key)
-        {
-            let slot = *head.get();
+        if let Some(head) = self.heads.get_mut(&identity.key) {
+            let slot = *head;
             // Refusal must leave the reusable list and its original owner intact.
             jobs[slot].admit(budget)?;
             if let Some(next) = jobs[slot].job_mut().next_reuse.take() {
-                *head.get_mut() = next;
+                *head = next;
             } else {
-                head.remove();
+                self.heads.remove(&identity.key);
             }
             return Ok(slot);
         }
@@ -94,7 +99,7 @@ impl GeometryReuse {
 
     /// No index may survive replacement of the reclaimed job list.
     pub(super) fn clear(&mut self) {
-        self.heads.clear();
+        self.heads.clear_retaining_capacity();
     }
 }
 
