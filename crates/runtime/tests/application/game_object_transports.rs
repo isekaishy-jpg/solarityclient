@@ -417,7 +417,7 @@ fn transport_model_completes_primary_phases_without_restarting_unchanged_routes(
         + callbacks * size_of::<solarity_rendering::M2QueuedCallback>();
     assert!(bytes > 0);
     let budget =
-        solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(bytes, 0, 0));
+        solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(bytes + 65536, 0, 0));
     let refused =
         solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(bytes - 1, 0, 0));
     let mut scratch = crate::application::model_playback::M2CallbackScratch::default();

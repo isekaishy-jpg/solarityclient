@@ -609,7 +609,7 @@ impl M2Frame {
             let bone_transforms = body_pose
                 .as_ref()
                 .map_or(&[][..], |pose| pose.bone_transforms());
-            for expired in advance.expired_variations {
+            for expired in advance.expired_variations.iter() {
                 self.bone_demand
                     .begin(&demand_budget, source.model.animations().bones().len())?;
                 self.bone_demand

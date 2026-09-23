@@ -7,10 +7,12 @@ mod tests;
 mod bones;
 mod callback_storage;
 mod clocks;
+mod event_output;
 pub(in crate::application) use bones::M2BoneEventCallback;
 use bones::M2BonePlayback;
 pub(in crate::application) use callback_storage::{M2CallbackScratch, M2CallbackStorage};
 pub(in crate::application) use clocks::PoseClockScratch;
+use event_output::EventOutput;
 
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::random::CrtRand;
@@ -59,7 +61,7 @@ pub(in crate::application) type M2CompletionCallback<'a> =
 /// Current bone clock plus an expired variation tail awaiting event dispatch.
 pub(in crate::application) struct M2PlaybackAdvance {
     pub(in crate::application) clock: M2AnimationClock,
-    pub(in crate::application) expired_variations: Vec<M2ExpiredVariation>,
+    pub(in crate::application) expired_variations: solarity_cpu::CpuBuffer<M2ExpiredVariation>,
 }
 
 /// One immediate callback borrows the scan's pose, frozen before tied completions.
@@ -74,7 +76,7 @@ pub(in crate::application) struct M2BoneEvent<'a> {
 pub(in crate::application) struct M2ExpiredVariation {
     pub(in crate::application) clock: M2AnimationClock,
     pub(in crate::application) event_window: M2EventTimeWindow,
-    pub(in crate::application) bone_sequences: Vec<(u16, M2AnimationClock)>,
+    pub(in crate::application) bone_sequences: solarity_cpu::CpuBuffer<(u16, M2AnimationClock)>,
 }
 
 impl M2Playback {
@@ -559,6 +561,7 @@ impl M2Playback {
     }
 
     /// Advances one expired stock timer and returns the selected sequence clock.
+    #[cfg(test)]
     pub(in crate::application) fn clock(
         &mut self,
         model: &DecodedM2Model,
@@ -577,6 +580,21 @@ impl M2Playback {
         storage: M2CallbackStorage<'_>,
     ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
         self.clock_with_completion_storage(model, time, random, None, Some(storage))
+    }
+
+    /// Sky owns only a primary timer and does not publish authored model events.
+    pub(in crate::application) fn clock_without_events(
+        &mut self,
+        model: &DecodedM2Model,
+        time: f32,
+        random: &mut CrtRand,
+    ) -> Result<M2AnimationClock, RuntimeTerrainFrameError> {
+        if !self.bone_playback.is_empty() {
+            return Err(solarity_cpu::CpuError::InvalidExecutionPlan.into());
+        }
+        Ok(self
+            .advance_primary_clock(model, time, random, None, EventOutput::discarded())?
+            .clock)
     }
 
     /// 830DC0 -> 82F0F0 samples existing bone timers without advancing the
@@ -610,6 +628,7 @@ impl M2Playback {
     ///
     /// Attachment queries use `sample_clock` instead: reading a bone pose does
     /// not dispatch this callback or choose a replacement variation.
+    #[cfg(test)]
     pub(in crate::application) fn clock_with_completion(
         &mut self,
         model: &DecodedM2Model,
@@ -647,34 +666,51 @@ impl M2Playback {
                 storage,
             );
         }
+        let output = EventOutput::required(storage.as_ref().map(|storage| storage.budget))?;
+        self.advance_primary_clock(model, animation_time_ms, random, callback, output)
+    }
+
+    fn advance_primary_clock(
+        &mut self,
+        model: &DecodedM2Model,
+        animation_time_ms: f32,
+        random: &mut CrtRand,
+        callback: Option<&mut M2CompletionCallback<'_>>,
+        mut output: EventOutput<'_>,
+    ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
         self.scene_time_ms = animation_time_ms as u32;
         let global_time_ms = self.global_tick(self.scene_time_ms);
         if let Some(timer) = self.script_timer {
-            return self.advance_model_timer(model, timer, global_time_ms, random, callback);
+            return self.advance_model_timer(
+                model,
+                timer,
+                global_time_ms,
+                random,
+                callback,
+                output,
+            );
         }
         let elapsed_ms = (animation_time_ms - self.cycle_started_ms).max(0.0);
         let selected_span_ms = self.sequence_duration_ms * self.cycle_count as f32;
-        let mut expired_variations = Vec::new();
         if self.has_variations && self.sequence_duration_ms > 0.0 && elapsed_ms >= selected_span_ms
         {
             // Stock finishes the old sequence's event interval before replacing
             // its timer. Bone-relative callbacks from that tail must also use
             // the old sequence's terminal pose, not the newly selected pose.
-            expired_variations.push(M2ExpiredVariation {
-                bone_sequences: Vec::new(),
-                clock: M2AnimationClock::new_with_global_tick(
+            output.primary(
+                M2AnimationClock::new_with_global_tick(
                     self.sequence,
                     self.sequence_duration_ms,
                     global_time_ms,
                 ),
-                event_window: M2EventTimeWindow::new(
+                M2EventTimeWindow::new(
                     self.sequence,
                     self.previous_event_elapsed_ms,
                     selected_span_ms,
                     !self.event_timeline_started,
                     true,
                 ),
-            });
+            )?;
             let animation_id = model.animations().sequences()[self.sequence].animation_id();
             self.sequence = model
                 .animations()
@@ -699,7 +735,7 @@ impl M2Playback {
                 animation_time_ms - self.cycle_started_ms,
                 global_time_ms,
             ),
-            expired_variations,
+            expired_variations: output.finish(),
         })
     }
 
@@ -711,9 +747,9 @@ impl M2Playback {
         global_time_ms: u32,
         random: &mut CrtRand,
         mut callback: Option<&mut M2CompletionCallback<'_>>,
+        mut output: EventOutput<'_>,
     ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
         let animations = model.animations();
-        let mut expired_variations = Vec::new();
         if self.paused_scene_time_ms != 0 && self.scene_time_ms != 0 {
             let delta = self.scene_time_ms.wrapping_sub(self.paused_scene_time_ms);
             self.paused_scene_time_ms = self.scene_time_ms;
@@ -731,16 +767,18 @@ impl M2Playback {
             else {
                 break;
             };
-            expired_variations.push(M2ExpiredVariation {
-                bone_sequences: Vec::new(),
-                clock: M2AnimationClock::new_with_global_tick(
+            output.primary(
+                M2AnimationClock::new_with_global_tick(
                     self.sequence,
                     timer.animation_time_ms(boundary) as f32,
                     global_time_ms,
                 ),
-                event_window: M2EventTimeWindow::new(self.sequence, 0.0, 0.0, false, false)
-                    .with_scene_timer(timer, self.previous_event_scene_time_ms, boundary),
-            });
+                M2EventTimeWindow::new(self.sequence, 0.0, 0.0, false, false).with_scene_timer(
+                    timer,
+                    self.previous_event_scene_time_ms,
+                    boundary,
+                ),
+            )?;
             self.previous_event_scene_time_ms = boundary;
             self.script_timer = Some(timer);
             self.script_finished = timer.is_terminal();
@@ -814,7 +852,7 @@ impl M2Playback {
         }
         Ok(M2PlaybackAdvance {
             clock,
-            expired_variations,
+            expired_variations: output.finish(),
         })
     }
 

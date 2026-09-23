@@ -409,10 +409,10 @@ fn admitted_event_snapshot_preserves_refused_timers_and_matches_owned_dispatch()
     assert_eq!(advance.clock, expected.clock);
     assert_eq!(random, reference_random);
     assert_eq!(received.len(), expected.expired_variations.len());
-    for (actual, expected) in received.iter().zip(&expected.expired_variations) {
+    for (actual, expected) in received.iter().zip(expected.expired_variations.iter()) {
         assert_eq!(actual.0, expected.clock);
         assert_eq!(actual.1, expected.event_window);
-        assert_eq!(actual.2, expected.bone_sequences);
+        assert_eq!(actual.2, expected.bone_sequences[..]);
     }
     assert_eq!(scratch.clocks.values().as_ptr(), address);
     assert_eq!(scratch.queue.as_ptr(), queue_address);
@@ -424,8 +424,8 @@ fn admitted_event_snapshot_preserves_refused_timers_and_matches_owned_dispatch()
         &budget,
         [(4, M2AnimationClock::new(0, 10., 10.))].into_iter(),
     )?;
-    for (actual, expected) in received.iter().zip(&expected.expired_variations) {
-        assert_eq!(actual.2, expected.bone_sequences);
+    for (actual, expected) in received.iter().zip(expected.expired_variations.iter()) {
+        assert_eq!(actual.2, expected.bone_sequences[..]);
     }
     drop(scratch);
     assert_eq!(budget.snapshot().used(Class::Frame), 0);
@@ -463,7 +463,7 @@ fn primary_completion_uses_admitted_bone_queue_and_returns_it_on_callback_error(
     )?;
     let bytes = size_of::<(u16, solarity_rendering::M2AnimationClock)>()
         + callbacks * size_of::<solarity_rendering::M2QueuedCallback>();
-    let budget = CpuStorageBudget::new(CpuStoragePlan::new(bytes, 0, 0));
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(bytes + 65536, 0, 0));
     let mut scratch = M2CallbackScratch::default();
     scratch.prepare(&budget, 1, callbacks)?;
     let address = scratch.queue.as_ptr();
@@ -517,12 +517,14 @@ fn primary_completion_uses_admitted_bone_queue_and_returns_it_on_callback_error(
     for (actual, expected) in actual
         .expired_variations
         .iter()
-        .zip(&expected.expired_variations)
+        .zip(expected.expired_variations.iter())
     {
         assert_eq!(actual.clock, expected.clock);
         assert_eq!(actual.event_window, expected.event_window);
-        assert_eq!(actual.bone_sequences, expected.bone_sequences);
+        assert_eq!(actual.bone_sequences[..], expected.bone_sequences[..]);
     }
+    let retained = budget.snapshot().used(Class::Frame);
+    assert!(retained > bytes);
     assert!(
         failed
             .clock_with_completion_storage(
@@ -536,6 +538,8 @@ fn primary_completion_uses_admitted_bone_queue_and_returns_it_on_callback_error(
     );
     assert!(scratch.queue.is_empty());
     assert_eq!(scratch.queue.as_ptr(), address);
+    assert_eq!(budget.snapshot().used(Class::Frame), retained);
+    drop(actual);
     assert_eq!(budget.snapshot().used(Class::Frame), bytes);
     drop(scratch);
     assert_eq!(budget.snapshot().used(Class::Frame), 0);

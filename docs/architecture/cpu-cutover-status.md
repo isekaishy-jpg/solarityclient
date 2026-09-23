@@ -19,6 +19,27 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected cutover changes
 
+The deferred playback-output batch replaces the event-record vector and each
+independent bone-clock snapshot with admitted `CpuBuffer` ownership. Each bone
+scan funds the entire queued event group, including nested snapshots, before its
+callbacks run. Primary timer tails reserve before completion dispatch and RNG
+selection. Moving these outputs into scene samples and selected placements keeps
+the charge live until consumption/drop. Sky playback uses the same primary timer
+transition code without materializing event tails that it never consumes.
+Production event-producing playback requires its caller's storage budget; the
+unbounded serial compatibility budget is test-only. Persistent bone-slot storage,
+complete geometry-phase admission and the remaining residency requirements stay
+open. This batch does not create another client package.
+
+Grouped validation passes 513 runtime library tests (30 existing ignores),
+all-target/all-feature runtime Clippy with warnings denied, formatting and
+whitespace checks. New cases cover collective nested-output pressure, preservation
+of earlier records on refusal, independent copied clocks and charge release,
+and clock-only sky parity for explicit and scalar timers. Existing callback-error,
+GameObject, transport and native bone dispatch fixtures also pass. Evidence:
+`target/deferred-event-output-tests.log` and
+`target/deferred-event-output-clippy.log`.
+
 [Testing Build 177](testing-build177-cpu-storage.md) is now installed from
 `d1e90f30`, packaging the accumulated source work below through connected pose
 inputs and collective pose outputs. Its identity/hash and Desktop shortcut are

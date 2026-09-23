@@ -60,15 +60,11 @@ impl SkyM2Model {
             .playback
             .as_mut()
             .ok_or(solarity_rendering::VulkanError::WorldFrameCapacity)?;
-        self.clock = Some(
-            playback
-                .clock(
-                    self.resident.model(),
-                    time_ms.wrapping_sub(self.created_tick) as f32,
-                    random,
-                )?
-                .clock,
-        );
+        self.clock = Some(playback.clock_without_events(
+            self.resident.model(),
+            time_ms.wrapping_sub(self.created_tick) as f32,
+            random,
+        )?);
         Ok(())
     }
 
@@ -111,7 +107,7 @@ impl SkyM2Model {
             true,
             random,
         )?;
-        self.clock = Some(playback.clock(model, scene_time as f32, random)?.clock);
+        self.clock = Some(playback.clock_without_events(model, scene_time as f32, random)?);
         Ok(())
     }
 

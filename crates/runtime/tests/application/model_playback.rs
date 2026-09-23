@@ -102,7 +102,7 @@ fn attachment_clock_queries_preserve_overdue_callbacks_events_and_variation_rand
     for (actual, expected) in actual
         .expired_variations
         .iter()
-        .zip(&expected.expired_variations)
+        .zip(expected.expired_variations.iter())
     {
         assert_eq!(actual.clock, expected.clock);
         assert_eq!(
@@ -1038,6 +1038,113 @@ fn model_variation_blend_replaces_the_secondary_at_exactly_half_weight()
             expected_x
         };
         assert!((pose.transforms()[0].w_axis.x - expected_x).abs() < 0.0001);
+    }
+    Ok(())
+}
+
+#[test]
+fn deferred_output_admits_the_whole_scan_and_retains_independent_clocks()
+-> Result<(), Box<dyn Error>> {
+    use super::event_output::EventOutput;
+    use solarity_cpu::{CpuStorageBudget, CpuStorageClass as Class, CpuStoragePlan};
+    use solarity_rendering::{M2AnimationClock, M2CallbackSlot, M2QueuedCallback};
+    let (model, catalog) = playback_model()?;
+    let mut random = CrtRand::new();
+    let playback = M2Playback::default_sequence(&model, &catalog, 0, &mut random)?;
+    let clock = playback.sample_clock(0);
+    let slot = M2CallbackSlot {
+        bone: 0,
+        sequence: clock.sequence(),
+        timer: playback.script_timer.ok_or("timer")?,
+        finished: false,
+    };
+    let queue = [
+        M2QueuedCallback {
+            slot,
+            event: Some(2),
+            scene_time_ms: 10,
+        },
+        M2QueuedCallback {
+            slot,
+            event: None,
+            scene_time_ms: 10,
+        },
+        M2QueuedCallback {
+            slot,
+            event: Some(0),
+            scene_time_ms: 10,
+        },
+    ];
+    let mut bones = [(4, clock), (7, clock)];
+    let outer = 2 * size_of::<super::M2ExpiredVariation>();
+    let nested = 4 * size_of::<(u16, M2AnimationClock)>();
+    let refused = CpuStorageBudget::new(CpuStoragePlan::new(outer + nested - 1, 0, 0));
+    let mut output = EventOutput::required(Some(&refused))?;
+    assert!(matches!(
+        output.group(clock, &bones, &queue),
+        Err(solarity_cpu::CpuError::StorageAtCapacity { .. })
+    ));
+    assert_eq!(refused.snapshot().used(Class::Frame), 0);
+    assert_eq!(output.finish().capacity(), 0);
+
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(outer + nested, 0, 0));
+    let mut output = EventOutput::required(Some(&budget))?;
+    output.group(clock, &bones, &queue)?;
+    assert_eq!(budget.snapshot().used(Class::Frame), outer + nested);
+    // A later refused scan must preserve all previously admitted outputs.
+    assert!(output.group(clock, &bones, &queue).is_err());
+    let values = output.finish();
+    assert_eq!(values.len(), 2);
+    assert_ne!(
+        values[0].bone_sequences.as_ptr(),
+        values[1].bone_sequences.as_ptr()
+    );
+    bones[0].1 = M2AnimationClock::new(0, 99., 99.);
+    assert_ne!(bones[0].1, values[0].bone_sequences[0].1);
+    for (event, index) in values.iter().zip([2, 0]) {
+        assert_eq!(event.clock, clock);
+        assert_eq!(
+            event.event_window,
+            solarity_rendering::M2EventTimeWindow::queued_event(slot.sequence, index)
+        );
+        assert_eq!(event.bone_sequences[..], [(4, clock), (7, clock)]);
+    }
+    assert_eq!(budget.snapshot().used(Class::Frame), outer + nested);
+    drop(values);
+    assert_eq!(budget.snapshot().used(Class::Frame), 0);
+    Ok(())
+}
+
+#[test]
+fn sky_clock_only_matches_recorded_primary_timer_and_random_advancement()
+-> Result<(), Box<dyn Error>> {
+    let (model, catalog) = playback_model()?;
+    for explicit in [true, false] {
+        let mut random = CrtRand::new();
+        let mut recorded = M2Playback::default_sequence(&model, &catalog, 0, &mut random)?;
+        if !explicit {
+            recorded.script_timer = None;
+        }
+        let mut sky = recorded.clone();
+        let mut sky_random = random;
+        let mut events = 0;
+        for now in [0., 250., 1001., 2200., 3500., 3500., 10000.] {
+            let expected = recorded.clock(&model, now, &mut random)?;
+            events += expected.expired_variations.len();
+            assert_eq!(
+                sky.clock_without_events(&model, now, &mut sky_random)?,
+                expected.clock
+            );
+            assert_eq!(sky_random, random);
+            assert_eq!(sky.script_timer, recorded.script_timer);
+            assert_eq!(
+                sky.previous_event_scene_time_ms,
+                recorded.previous_event_scene_time_ms
+            );
+            assert_eq!(sky.cycle_started_ms, recorded.cycle_started_ms);
+            assert_eq!(sky.event_window(now), recorded.event_window(now));
+        }
+        assert!(events > 0);
     }
     Ok(())
 }

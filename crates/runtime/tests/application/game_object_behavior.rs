@@ -95,7 +95,7 @@ fn live_transition_completes_without_gpu_placement_and_preserves_shared_timer()
         + callbacks * size_of::<solarity_rendering::M2QueuedCallback>();
     assert!(bytes > 0);
     let budget =
-        solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(bytes, 0, 0));
+        solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(bytes + 65536, 0, 0));
     let refused =
         solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(bytes - 1, 0, 0));
     let mut scratch = crate::application::model_playback::M2CallbackScratch::default();

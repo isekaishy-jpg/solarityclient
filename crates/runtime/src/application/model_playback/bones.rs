@@ -7,8 +7,8 @@ use solarity_rendering::{
 };
 
 use super::{
-    M2BoneEvent, M2CallbackScratch, M2CallbackStorage, M2ExpiredVariation, M2Playback,
-    M2PlaybackAdvance, PoseClockScratch,
+    EventOutput, M2BoneEvent, M2CallbackScratch, M2CallbackStorage, M2Playback, M2PlaybackAdvance,
+    PoseClockScratch,
 };
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::random::CrtRand;
@@ -375,6 +375,7 @@ impl M2Playback {
         event_callback: Option<&mut M2BoneEventCallback<'_>>,
         storage: Option<M2CallbackStorage<'_>>,
     ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
+        let output = EventOutput::required(storage.as_ref().map(|storage| storage.budget))?;
         if let Some(storage) = storage {
             storage.scratch.prepare(
                 storage.budget,
@@ -390,6 +391,7 @@ impl M2Playback {
                 event_callback,
                 Some((storage.budget, clocks)),
                 &mut queue.writer(),
+                output,
             )
         } else {
             let mut queue = std::mem::take(&mut self.callback_queue);
@@ -401,6 +403,7 @@ impl M2Playback {
                 event_callback,
                 None,
                 &mut queue,
+                output,
             );
             self.callback_queue = queue;
             result
@@ -417,13 +420,13 @@ impl M2Playback {
         mut event_callback: Option<&mut M2BoneEventCallback<'_>>,
         mut event_storage: Option<(&solarity_cpu::CpuStorageBudget, &mut PoseClockScratch)>,
         queue: &mut impl solarity_cpu::OutputBuffer<M2QueuedCallback>,
+        mut output: EventOutput<'_>,
     ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
         self.prepare_bone_scene(now);
         for slot in &mut self.bone_playback {
             slot.playback.prepare_bone_scene(now);
         }
         let result = (|| {
-            let mut expired_variations = Vec::new();
             let mut previous = self.previous_event_scene_time_ms;
             while self.paused_scene_time_ms == 0 {
                 let slots = self
@@ -460,6 +463,11 @@ impl M2Playback {
                 } else {
                     None
                 };
+                if event_callback.is_none()
+                    && let Some((clock, bones)) = &event_pose
+                {
+                    output.group(*clock, bones, queue.as_ref())?;
+                }
                 for queued in queue.as_ref().iter().copied() {
                     if let Some(index) = queued.event {
                         let Some((clock, bones)) = event_pose.as_ref() else {
@@ -475,12 +483,6 @@ impl M2Playback {
                         };
                         if let Some(callback) = event_callback.as_mut() {
                             callback(self, index, queued.scene_time_ms, &event, random)?;
-                        } else {
-                            expired_variations.push(M2ExpiredVariation {
-                                clock: event.clock,
-                                event_window: event.event_window,
-                                bone_sequences: event.bone_sequences.to_vec(),
-                            });
                         }
                         continue;
                     }
@@ -528,7 +530,7 @@ impl M2Playback {
             }
             Ok(M2PlaybackAdvance {
                 clock: self.sample_clock(now),
-                expired_variations,
+                expired_variations: output.finish(),
             })
         })();
         queue.clear();
