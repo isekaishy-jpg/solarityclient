@@ -19,6 +19,28 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected cutover changes
 
+The geometry capture batch moves output admission ahead of each model's live
+input transfer. A single reservation covers copied palette overrides, effect
+record ownership, full palette/draw streams and nested particle/ribbon capacity.
+Capture inspects the still-owned effect arrays and whichever palette will move;
+only after admission does it take those inputs. Each worker receives protected
+headroom plus checked output counts, allocates all members of its dispatch group
+before the first numeric kernel, and releases unused reservation capacity on
+completion or abandonment. Worker groups retain incremental publication and
+calibrated dispatch. This closes per-model input-transfer/worker-readmission
+pressure, not the remaining connected admission across all discovered phase
+groups. Capacity planning now occurs during capture; no live timing gain is
+claimed and the broader complete phase/residency requirements remain open.
+
+Validation passes all 513 runtime library tests (30 existing ignores), runtime
+all-target/all-feature Clippy with warnings denied, formatting and whitespace
+checks. The real geometry fixture now covers one-byte-short capture refusal
+before output growth or effect transfer, worker allocation from the held fund at
+zero spare headroom, warm pointer-stable reuse and rebinding of retained output
+and simulation capacity. Moving-frame serial parity and abandoned-frame state
+return also pass. Evidence: `target/geometry-capture-admission-tests.log` and
+`target/geometry-capture-admission-clippy.log`. No numbered package or FPS run.
+
 The deferred playback-output batch replaces the event-record vector and each
 independent bone-clock snapshot with admitted `CpuBuffer` ownership. Each bone
 scan funds the entire queued event group, including nested snapshots, before its

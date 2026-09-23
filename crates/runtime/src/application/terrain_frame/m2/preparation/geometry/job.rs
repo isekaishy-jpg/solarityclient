@@ -18,6 +18,7 @@ pub(super) struct GeometryJob {
     pub(super) next_reuse: Option<usize>,
     pub(super) measurement: solarity_cpu::WorkMeasurement,
     pub(super) cost_class: usize,
+    pub(super) admission: Option<super::storage::GeometryAdmission>,
     pub(super) input: Option<GeometryInput>,
     pub(super) context: Option<GeometryContext>,
     pub(super) owns_effects: bool,
@@ -43,8 +44,6 @@ pub(super) struct GeometryJob {
 
 /// Immutable generation and camera inputs own every worker dependency.
 pub(super) struct GeometryContext {
-    /// Owned admission budget survives withdrawal until the worker returns state.
-    pub(super) storage: solarity_cpu::CpuStorageBudget,
     pub(super) source: super::super::super::M2GpuSource,
     pub(super) camera: solarity_rendering::WorldCameraFrame,
     pub(super) effect_scale: solarity_rendering::M2CameraEffectScale,
@@ -75,6 +74,7 @@ impl GeometryJob {
 
     /// Clears output lengths while retaining storage for the next visible model.
     pub(super) fn reset(&mut self) {
+        self.admission = None;
         self.publishes_palette = false;
         self.material_poses.clear();
         self.shadow_draws.clear();

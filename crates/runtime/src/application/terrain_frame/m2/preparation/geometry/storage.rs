@@ -1,6 +1,8 @@
-//! Worker admission reserves palette, draw streams and effect state before simulation.
+//! Capture reserves output headroom; workers allocate before simulation.
 
-use super::super::super::{M2GpuSource, RuntimeTerrainFrameError};
+use super::super::super::{
+    EffectRecords, M2GpuSource, M2ParticlePlacement, M2RibbonTrail, RuntimeTerrainFrameError,
+};
 use super::{GeometryInput, GeometryJob};
 use solarity_cpu::{
     CpuBuffer, CpuError, CpuStorageBudget, CpuStorageClass as Class, CpuStorageKind as Kind,
@@ -37,9 +39,10 @@ pub(super) struct OutputCounts {
 
 impl GeometryJob {
     fn output_counts(
-        &self,
         input: &GeometryInput,
         source: &M2GpuSource,
+        particles: &EffectRecords<M2ParticlePlacement>,
+        ribbons: &EffectRecords<M2RibbonTrail>,
     ) -> Result<OutputCounts, RuntimeTerrainFrameError> {
         let shadows = if (input.primary_shadow || input.environment_maps != 0)
             && source.mesh.is_some()
@@ -70,7 +73,7 @@ impl GeometryJob {
             .animations()
             .particles()
             .iter()
-            .zip(&self.particles)
+            .zip(particles)
             .zip(&source.particles)
         {
             if particle.unsupported.is_some() {
@@ -93,7 +96,7 @@ impl GeometryJob {
         let mut ribbon_vertices = 0;
         let mut ribbon_draws = 0;
         if !visible.effect_retiring {
-            for (trail, passes) in self.ribbons.iter().zip(&source.ribbons) {
+            for (trail, passes) in ribbons.iter().zip(&source.ribbons) {
                 if passes.is_empty() {
                     continue;
                 }
@@ -118,18 +121,22 @@ impl GeometryJob {
     }
 
     /// Includes this model's exact allocation sequence without allocating or ticking.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn include_working_set(
         &self,
         budget: &CpuStorageBudget,
         input: &GeometryInput,
         source: &M2GpuSource,
+        pose: &solarity_rendering::M2BonePose,
+        particles: &EffectRecords<M2ParticlePlacement>,
+        ribbons: &EffectRecords<M2RibbonTrail>,
         working_set: &mut CpuStorageWorkingSet,
     ) -> Result<OutputCounts, RuntimeTerrainFrameError> {
-        let counts = self.output_counts(input, source)?;
-        self.particles.include_storage(budget, working_set)?;
-        self.ribbons.include_storage(budget, working_set)?;
+        let counts = Self::output_counts(input, source, particles, ribbons)?;
+        particles.include_storage(budget, working_set)?;
+        ribbons.include_storage(budget, working_set)?;
         let bones = source.model.animations().bones().len();
-        self.pose.include_cpu_storage(budget, bones, working_set)?;
+        pose.include_cpu_storage(budget, bones, working_set)?;
         include(
             &self.material_poses,
             budget,
@@ -181,7 +188,7 @@ impl GeometryJob {
             working_set,
         )?;
         if input.visible.is_some() {
-            for (particle, resource) in self.particles.iter().zip(&source.particles) {
+            for (particle, resource) in particles.iter().zip(&source.particles) {
                 if particle.unsupported.is_none() {
                     particle.simulation.include_cpu_storage(
                         budget,
@@ -190,7 +197,7 @@ impl GeometryJob {
                     )?;
                 }
             }
-            for trail in &self.ribbons {
+            for trail in ribbons {
                 trail.include_cpu_storage(budget, working_set)?;
             }
         }
@@ -273,4 +280,60 @@ fn reserve<T>(
     capacity: usize,
 ) -> Result<(), CpuError> {
     buffer.reserve_reserved(reservation, Kind::Result, capacity)
+}
+
+/// Protected headroom moves with the model; workers never compete to readmit it.
+pub(super) struct GeometryAdmission {
+    fund: CpuStorageReservation,
+    counts: OutputCounts,
+}
+
+impl GeometryJob {
+    /// Reads still-owned inputs and funds copied overrides plus all output/simulation
+    /// growth before capture can remove a particle, ribbon or prepared palette.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn admit_capture(
+        &mut self,
+        budget: &CpuStorageBudget,
+        input: &GeometryInput,
+        source: &M2GpuSource,
+        pose: &solarity_rendering::M2BonePose,
+        palette: Option<solarity_rendering::M2BonePoseOverrides<'_>>,
+        effects: Option<(
+            &mut EffectRecords<M2ParticlePlacement>,
+            &mut EffectRecords<M2RibbonTrail>,
+        )>,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let mut plan = CpuStorageWorkingSet::default();
+        self.palette.include_storage(palette, budget, &mut plan)?;
+        let (particles, ribbons) = effects
+            .as_ref()
+            .map_or((&self.particles, &self.ribbons), |(particles, ribbons)| {
+                (&**particles, &**ribbons)
+            });
+        let pose = if palette.is_some() { &self.pose } else { pose };
+        let counts =
+            self.include_working_set(budget, input, source, pose, particles, ribbons, &mut plan)?;
+        let mut fund = budget.reserve_working_set(Class::Frame, plan.bytes())?;
+        self.palette.prepare_reserved(palette, &mut fund)?;
+        if let Some((particles, ribbons)) = effects {
+            particles.reserve_reserved(&mut fund)?;
+            ribbons.reserve_reserved(&mut fund)?;
+        }
+        self.admission = Some(GeometryAdmission { fund, counts });
+        Ok(())
+    }
+
+    /// Runs on the worker using capacity protected before ownership transfer.
+    pub(super) fn allocate_admitted(&mut self) -> Result<(), RuntimeTerrainFrameError> {
+        let GeometryAdmission { mut fund, counts } = self
+            .admission
+            .take()
+            .ok_or(CpuError::InvalidExecutionPlan)?;
+        let context = self.context.take().ok_or(CpuError::InvalidExecutionPlan)?;
+        let input = self.input.ok_or(CpuError::InvalidExecutionPlan)?;
+        let result = self.reserve_working_set(&mut fund, &input, &context.source, counts);
+        self.context = Some(context);
+        result.map_err(Into::into)
+    }
 }

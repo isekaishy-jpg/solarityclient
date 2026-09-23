@@ -1,5 +1,6 @@
 //! Owned render-pose overrides are independent of ordered CPU bone samples.
 
+#[cfg(test)]
 use super::super::super::{EffectRecords, M2ParticlePlacement, M2RibbonTrail};
 use glam::Mat4;
 use solarity_rendering::{M2AnimationClock, M2BonePoseOverrides, M2FingerPoseHands};
@@ -14,7 +15,55 @@ pub(super) struct PaletteInput {
 }
 
 impl PaletteInput {
-    /// Reserves copied overrides before the placement transfers any simulation state.
+    /// Includes copied overrides in the same transaction as their geometry outputs.
+    pub(super) fn include_storage(
+        &self,
+        input: Option<M2BonePoseOverrides<'_>>,
+        budget: &solarity_cpu::CpuStorageBudget,
+        plan: &mut solarity_cpu::CpuStorageWorkingSet,
+    ) -> Result<(), solarity_cpu::CpuError> {
+        let (transforms, sequences) = input.as_ref().map_or((0, 0), |input| {
+            (input.bone_transforms.len(), input.bone_sequences.len())
+        });
+        use solarity_cpu::CpuStorageClass as Class;
+        plan.include(
+            self.transforms
+                .reservation_bytes(budget, Class::Frame, transforms)?,
+            self.transforms.replacement_credit(transforms),
+        )?;
+        plan.include(
+            self.sequences
+                .reservation_bytes(budget, Class::Frame, sequences)?,
+            self.sequences.replacement_credit(sequences),
+        )
+    }
+
+    pub(super) fn prepare_reserved(
+        &mut self,
+        input: Option<M2BonePoseOverrides<'_>>,
+        reservation: &mut solarity_cpu::CpuStorageReservation,
+    ) -> Result<(), solarity_cpu::CpuError> {
+        let (transforms, sequences) = input.as_ref().map_or((0, 0), |input| {
+            (input.bone_transforms.len(), input.bone_sequences.len())
+        });
+        use solarity_cpu::CpuStorageKind as Kind;
+        self.transforms
+            .reserve_reserved(reservation, Kind::Scratch, transforms)?;
+        self.sequences
+            .reserve_reserved(reservation, Kind::Scratch, sequences)?;
+        self.pending = input.is_some();
+        self.transforms.clear();
+        self.sequences.clear();
+        self.fingers = None;
+        if let Some(input) = input {
+            self.fingers = input.finger_pose;
+            self.transforms.extend_from_slice(input.bone_transforms)?;
+            self.sequences.extend_from_slice(input.bone_sequences)?;
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
     pub(super) fn prepare(
         &mut self,
         input: Option<M2BonePoseOverrides<'_>>,
@@ -24,44 +73,18 @@ impl PaletteInput {
             &mut EffectRecords<M2RibbonTrail>,
         )>,
     ) -> Result<(), solarity_cpu::CpuError> {
-        let (transforms, sequences) = input.as_ref().map_or((0, 0), |input| {
-            (input.bone_transforms.len(), input.bone_sequences.len())
-        });
-        use solarity_cpu::{
-            CpuStorageClass as Class, CpuStorageKind as Kind, CpuStorageWorkingSet,
-        };
-        let mut working_set = CpuStorageWorkingSet::default();
-        working_set.include(
-            self.transforms
-                .reservation_bytes(budget, Class::Frame, transforms)?,
-            self.transforms.replacement_credit(transforms),
-        )?;
-        working_set.include(
-            self.sequences
-                .reservation_bytes(budget, Class::Frame, sequences)?,
-            self.sequences.replacement_credit(sequences),
-        )?;
+        let mut plan = solarity_cpu::CpuStorageWorkingSet::default();
+        self.include_storage(input, budget, &mut plan)?;
         if let Some((particles, ribbons)) = &effects {
-            particles.include_storage(budget, &mut working_set)?;
-            ribbons.include_storage(budget, &mut working_set)?;
+            particles.include_storage(budget, &mut plan)?;
+            ribbons.include_storage(budget, &mut plan)?;
         }
-        let mut reservation = budget.reserve_working_set(Class::Frame, working_set.bytes())?;
-        self.transforms
-            .reserve_reserved(&mut reservation, Kind::Scratch, transforms)?;
-        self.sequences
-            .reserve_reserved(&mut reservation, Kind::Scratch, sequences)?;
+        let mut fund =
+            budget.reserve_working_set(solarity_cpu::CpuStorageClass::Frame, plan.bytes())?;
+        self.prepare_reserved(input, &mut fund)?;
         if let Some((particles, ribbons)) = effects {
-            particles.reserve_reserved(&mut reservation)?;
-            ribbons.reserve_reserved(&mut reservation)?;
-        }
-        self.pending = input.is_some();
-        self.transforms.clear();
-        self.sequences.clear();
-        self.fingers = None;
-        if let Some(input) = input {
-            self.fingers = input.finger_pose;
-            self.transforms.extend_from_slice(input.bone_transforms)?;
-            self.sequences.extend_from_slice(input.bone_sequences)?;
+            particles.reserve_reserved(&mut fund)?;
+            ribbons.reserve_reserved(&mut fund)?;
         }
         Ok(())
     }

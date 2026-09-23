@@ -178,9 +178,7 @@ impl GeometryBatch {
         let job = batch.jobs[slot].job_mut();
         job.reuse_identity = Some(identity);
         job.reset();
-        // Only the shared worker-lane bound is needed before dispatch. Per-model
-        // output and simulation allocations belong to the owned admission stage;
-        // they no longer walk emitter/mesh layouts on the coordinator.
+        // Reserve the shared worker lane before capturing any live simulation.
         let sorting = if input.visible.is_some() {
             placement
                 .particles
@@ -204,24 +202,17 @@ impl GeometryBatch {
             .unwrap_or_else(|| unreachable!("geometry admission owns worker scratch"))
             .reserve(sorting)?;
         batch.particle_scratch_peak = batch.particle_scratch_peak.max(sorting);
-        job.input = Some(input);
-        job.context = Some(super::GeometryContext {
-            storage: batch
-                .storage
-                .as_ref()
-                .unwrap_or_else(|| unreachable!("geometry admission owns a storage budget"))
-                .clone(),
-            source: std::sync::Arc::clone(source),
-            camera,
-            effect_scale,
-            twinkle: std::sync::Arc::clone(twinkle),
-        });
-        job.palette.prepare(
-            palette,
+        // Output headroom and copied overrides are one admission transaction.
+        // Numeric work and the output allocations themselves remain on workers.
+        job.admit_capture(
             batch
                 .storage
                 .as_ref()
-                .unwrap_or_else(|| unreachable!("geometry admission owns a storage budget")),
+                .unwrap_or_else(|| unreachable!("geometry admission owns budget")),
+            &input,
+            source,
+            pose,
+            palette,
             input
                 .visible
                 .is_some()
@@ -239,6 +230,13 @@ impl GeometryBatch {
                 .unwrap_or_else(|| unreachable!("admitted draw phase owns budget")),
         )?;
         let job = batch.jobs[slot].job_mut();
+        job.input = Some(input);
+        job.context = Some(super::GeometryContext {
+            source: std::sync::Arc::clone(source),
+            camera,
+            effect_scale,
+            twinkle: std::sync::Arc::clone(twinkle),
+        });
         job.owns_effects = input.visible.is_some();
         if job.owns_effects {
             std::mem::swap(&mut job.particles, &mut placement.particles);

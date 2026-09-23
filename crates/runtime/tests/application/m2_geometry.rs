@@ -542,16 +542,16 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
     Ok(())
 }
 
-/// Each model fits separately; refusal of the complete group must leave both
-/// living simulations and every output allocation untouched at the real worker entry.
+/// Capture refuses before any input transfer; a worker can allocate the full
+/// model from its protected fund with no unreserved headroom in the ledger.
 fn assert_worker_admission_refusal(
     cpu: &CpuExecutor,
     frame: &mut M2Frame,
     camera: solarity_rendering::WorldCameraFrame,
 ) -> Result<(), Box<dyn Error>> {
-    use super::{chunk::GeometryChunk, job::GeometryContext, owner::GeometryOwner};
+    use super::{job::GeometryContext, owner::GeometryOwner};
     use solarity_cpu::{
-        CpuStorageBudget, CpuStorageClass, CpuStoragePlan, CpuStorageWorkingSet, CpuWorkerScratch,
+        CpuStorageBudget, CpuStorageClass as Class, CpuStoragePlan, CpuStorageWorkingSet,
         FrameBatch,
     };
     let inputs: Vec<_> = frame
@@ -563,36 +563,83 @@ fn assert_worker_admission_refusal(
         .take(2)
         .collect();
     assert_eq!(inputs.len(), 2);
-    let probe = CpuStorageBudget::new(CpuStoragePlan::new(usize::MAX, 0, 0));
-    let mut chunk = GeometryChunk::default();
-    chunk.reserve(cpu.storage())?;
-    chunk.scratch = Some(CpuWorkerScratch::new(cpu, CpuStorageClass::Frame)?);
-    let mut particles = Vec::new();
-    let mut ribbons = Vec::new();
-    let mut largest = 0;
-    let mut combined = CpuStorageWorkingSet::default();
     for input in inputs {
         let source = frame.sources[input.source_index].as_ref().ok_or("source")?;
         let placement = &mut frame.placements[input.placement_index];
-        particles.push(
-            placement
-                .particles
-                .iter()
-                .map(|particle| particle.simulation.particles().to_vec())
-                .collect::<Vec<_>>(),
-        );
-        ribbons.push(
-            placement
-                .ribbons
-                .iter()
-                .map(|ribbon| ribbon.sections().cloned().collect::<Vec<_>>())
-                .collect::<Vec<_>>(),
-        );
+        let particles: Vec<_> = placement
+            .particles
+            .iter()
+            .map(|particle| particle.simulation.particles().to_vec())
+            .collect();
+        let ribbons: Vec<_> = placement
+            .ribbons
+            .iter()
+            .map(|ribbon| ribbon.sections().cloned().collect::<Vec<_>>())
+            .collect();
+        let addresses = (placement.particles.as_ptr(), placement.ribbons.as_ptr());
+        let transforms = [(0, Mat4::IDENTITY)];
+        let overrides = Some(M2BonePoseOverrides {
+            bone_transforms: &transforms,
+            ..Default::default()
+        });
+        let pose = M2BonePose::default();
         let mut owner = GeometryOwner::new(cpu.storage())?;
         let job = owner.job_mut();
+        let probe = CpuStorageBudget::new(CpuStoragePlan::new(usize::MAX, 0, 0));
+        let mut plan = CpuStorageWorkingSet::default();
+        job.palette.include_storage(overrides, &probe, &mut plan)?;
+        job.include_working_set(
+            &probe,
+            &input,
+            source,
+            &job.pose,
+            &placement.particles,
+            &placement.ribbons,
+            &mut plan,
+        )?;
+        let required = plan.bytes();
+        let refused = CpuStorageBudget::new(CpuStoragePlan::new(required - 1, 0, 0));
+        let baseline = cpu.storage().snapshot().used(Class::Frame);
+        assert!(
+            job.admit_capture(
+                &refused,
+                &input,
+                source,
+                &pose,
+                overrides,
+                Some((&mut placement.particles, &mut placement.ribbons))
+            )
+            .is_err()
+        );
+        assert_eq!(refused.snapshot().used(Class::Frame), 0);
+        assert_eq!(cpu.storage().snapshot().used(Class::Frame), baseline);
+        assert!(job.admission.is_none());
+        assert!(job.palette.overrides(&[]).bone_transforms.is_empty());
+        assert_eq!(job.pose.allocated_bytes(), 0);
+        assert_eq!(job.visible_draws.capacity(), 0);
+        assert_eq!(job.particle_vertices.capacity(), 0);
+        assert_eq!(
+            (placement.particles.as_ptr(), placement.ribbons.as_ptr()),
+            addresses
+        );
+
+        let budget = CpuStorageBudget::new(CpuStoragePlan::new(required, 0, 0));
+        job.admit_capture(
+            &budget,
+            &input,
+            source,
+            &pose,
+            overrides,
+            Some((&mut placement.particles, &mut placement.ribbons)),
+        )?;
+        assert_eq!(budget.snapshot().used(Class::Frame), required);
+        assert_eq!(
+            job.pose.allocated_bytes(),
+            0,
+            "output allocation stays on worker"
+        );
         job.input = Some(input);
         job.context = Some(GeometryContext {
-            storage: probe.clone(),
             source: Arc::clone(source),
             camera,
             effect_scale: M2CameraEffectScale::EXTERNAL_CAMERA,
@@ -600,47 +647,62 @@ fn assert_worker_admission_refusal(
         });
         std::mem::swap(&mut job.particles, &mut placement.particles);
         std::mem::swap(&mut job.ribbons, &mut placement.ribbons);
-        let mut individual = CpuStorageWorkingSet::default();
-        job.include_working_set(&probe, &input, source, &mut individual)?;
-        largest = largest.max(individual.bytes());
-        job.include_working_set(&probe, &input, source, &mut combined)?;
-        chunk.jobs.push(owner)?;
-    }
-    assert!(combined.bytes() > largest);
-    let refused = CpuStorageBudget::new(CpuStoragePlan::new(largest, 0, 0));
-    for owner in chunk.jobs.iter_mut() {
-        owner.job_mut().context.as_mut().ok_or("context")?.storage = refused.clone();
-    }
-    let mut chunks = vec![chunk];
-    let mut batch = FrameBatch::with_context(GeometryChunk::execute);
-    batch.start(cpu, &mut chunks)?;
-    batch.reclaim(&mut chunks)?;
-    for (index, owner) in chunks[0].jobs.iter_mut().enumerate() {
-        let job = owner.job_mut();
-        assert!(matches!(
-            job.result.as_ref(),
-            Some(Err(RuntimeTerrainFrameError::Cpu(_)))
-        ));
-        assert_eq!(job.pose.allocated_bytes(), 0);
-        assert_eq!(job.visible_draws.capacity(), 0);
-        assert_eq!(job.material_poses.capacity(), 0);
-        assert_eq!(job.particle_vertices.capacity(), 0);
-        assert_eq!(job.ribbon_vertices.capacity(), 0);
-        for (before, after) in particles[index].iter().zip(&job.particles) {
+        let mut owners = vec![owner];
+        let mut batch = FrameBatch::new(|owner: &mut GeometryOwner| {
+            let job = owner.job_mut();
+            job.result = Some(job.allocate_admitted());
+        });
+        batch.start(cpu, &mut owners)?;
+        batch.reclaim(&mut owners)?;
+        let job = owners[0].job_mut();
+        job.result.take().ok_or("worker result")??;
+        assert!(job.admission.is_none());
+        assert!(job.pose.allocated_bytes() > 0);
+        assert!(job.particle_vertices.capacity() > 0);
+        assert_eq!(job.palette.overrides(&[]).bone_transforms, transforms);
+        for (before, after) in particles.iter().zip(&job.particles) {
             assert_eq!(before.as_slice(), after.simulation.particles());
         }
-        for (before, after) in ribbons[index].iter().zip(&job.ribbons) {
+        for (before, after) in ribbons.iter().zip(&job.ribbons) {
             assert!(before.iter().eq(after.sections()));
         }
-        assert!(
-            job.context.is_none(),
-            "refused group releases immutable resource pins"
+        let pressure = budget.reserve(
+            Class::Frame,
+            solarity_cpu::CpuStorageKind::Scratch,
+            budget.snapshot().limit(Class::Frame) - budget.snapshot().used(Class::Frame),
+        )?;
+        let output_addresses = (job.particle_vertices.as_ptr(), job.ribbon_vertices.as_ptr());
+        job.admit_capture(&budget, &input, source, &pose, overrides, None)?;
+        job.allocate_admitted()?;
+        assert_eq!(
+            (job.particle_vertices.as_ptr(), job.ribbon_vertices.as_ptr()),
+            output_addresses
         );
-        let placement = &mut frame.placements[job.input.ok_or("input")?.placement_index];
+        drop(pressure);
+        // Retained output and simulation capacity can rebind as one transaction.
+        let mut plan = CpuStorageWorkingSet::default();
+        let counts = job.include_working_set(
+            cpu.storage(),
+            &input,
+            source,
+            &job.pose,
+            &job.particles,
+            &job.ribbons,
+            &mut plan,
+        )?;
+        let mut fund = cpu
+            .storage()
+            .reserve_working_set(Class::Frame, plan.bytes())?;
+        job.reserve_working_set(&mut fund, &input, source, counts)?;
         std::mem::swap(&mut job.particles, &mut placement.particles);
         std::mem::swap(&mut job.ribbons, &mut placement.ribbons);
+        assert_eq!(
+            (placement.particles.as_ptr(), placement.ribbons.as_ptr()),
+            addresses
+        );
+        drop(owners);
+        assert_eq!(budget.snapshot().used(Class::Frame), 0);
     }
-    assert_eq!(refused.snapshot().used(CpuStorageClass::Frame), 0);
     Ok(())
 }
 

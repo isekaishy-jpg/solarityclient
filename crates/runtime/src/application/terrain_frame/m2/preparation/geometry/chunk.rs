@@ -96,61 +96,12 @@ impl GeometryChunk {
         solarity_cpu::JobOutcome::Succeeded
     }
 
-    /// The bounded group is fully planned and funded before its first numeric kernel.
-    /// Layout errors keep their own ordered result; other valid members still run.
+    /// Every member already owns its output headroom. Allocate all members before
+    /// the first numeric kernel so an allocation failure cannot half-tick the group.
     fn admit_outputs(&mut self) -> Result<(), RuntimeTerrainFrameError> {
         let _profile = solarity_profiling::profile!("m2.geometry.group_admission");
-        let Some(first) = self.jobs.first() else {
-            return Ok(());
-        };
-        let budget = first
-            .job()
-            .context
-            .as_ref()
-            .unwrap_or_else(|| unreachable!("queued geometry owns its context"))
-            .storage
-            .clone();
-        let mut working_set = solarity_cpu::CpuStorageWorkingSet::default();
-        let mut counts: [Option<super::storage::OutputCounts>; MAX_MODELS] =
-            std::array::from_fn(|_| None);
-        for (owner, counts) in self.jobs.iter_mut().zip(&mut counts) {
-            let job = owner.job_mut();
-            let context = job
-                .context
-                .as_ref()
-                .unwrap_or_else(|| unreachable!("queued geometry owns its context"));
-            let input = job
-                .input
-                .as_ref()
-                .unwrap_or_else(|| unreachable!("queued geometry owns its input"));
-            let checkpoint = working_set;
-            match job.include_working_set(&budget, input, &context.source, &mut working_set) {
-                Ok(planned) => *counts = Some(planned),
-                Err(error) => {
-                    working_set = checkpoint;
-                    job.result = Some(Err(error));
-                    job.context = None;
-                }
-            }
-        }
-        let mut reservation =
-            budget.reserve_working_set(CpuStorageClass::Frame, working_set.bytes())?;
-        for (owner, counts) in self.jobs.iter_mut().zip(counts) {
-            let Some(counts) = counts else {
-                continue;
-            };
-            let job = owner.job_mut();
-            let context = job
-                .context
-                .take()
-                .unwrap_or_else(|| unreachable!("validated geometry owns its context"));
-            let input = job
-                .input
-                .unwrap_or_else(|| unreachable!("validated geometry owns its input"));
-            let admitted =
-                job.reserve_working_set(&mut reservation, &input, &context.source, counts);
-            job.context = Some(context);
-            admitted?;
+        for owner in self.jobs.iter_mut() {
+            owner.job_mut().allocate_admitted()?;
         }
         Ok(())
     }
@@ -166,6 +117,7 @@ impl GeometryChunk {
                     .take()
                     .unwrap_or_else(|| solarity_cpu::CpuError::DependencyFailed.into())));
             }
+            job.admission = None;
             job.context = None;
         }
     }
@@ -176,7 +128,9 @@ impl GeometryChunk {
         jobs: &mut impl solarity_cpu::OutputBuffer<GeometryOwner>,
     ) -> Result<(), solarity_cpu::CpuError> {
         jobs.try_reserve_exact(self.jobs.len())?;
-        for job in self.jobs.drain() {
+        for mut job in self.jobs.drain() {
+            job.job_mut().admission = None;
+            job.job_mut().context = None;
             jobs.push(job)
                 .unwrap_or_else(|_| unreachable!("model return was preflighted"));
         }
