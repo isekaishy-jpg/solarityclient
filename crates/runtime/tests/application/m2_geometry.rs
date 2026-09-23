@@ -426,6 +426,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         .frame(1.)?;
         assert_effect_capture_admission(&cpu, candidate)?;
         assert_worker_admission_refusal(&cpu, candidate, camera)?;
+        assert_geometry_phase_refusal(&cpu, candidate, camera)?;
         assert_finalization_start_refusal(&cpu, candidate)?;
         assert_late_pose_connected_admission(candidate.sources[0].as_ref().ok_or("source")?)?;
         super::super::poses::ScenePoses::assert_connected_admission(
@@ -703,6 +704,126 @@ fn assert_worker_admission_refusal(
         drop(owners);
         assert_eq!(budget.snapshot().used(Class::Frame), 0);
     }
+    Ok(())
+}
+
+/// A late capture failure returns every earlier funded group without allowing
+/// even the first geometry kernel to allocate outputs or tick its live effects.
+fn assert_geometry_phase_refusal(
+    cpu: &CpuExecutor,
+    frame: &mut M2Frame,
+    camera: solarity_rendering::WorldCameraFrame,
+) -> Result<(), Box<dyn Error>> {
+    use solarity_cpu::{CpuError, CpuStorageClass as Class, CpuStorageKind as Kind};
+    let inputs: Vec<_> = frame
+        .geometry_batch
+        .jobs
+        .iter()
+        .filter_map(|owner| owner.job().input)
+        .filter(|input| input.visible.is_some())
+        .take(3)
+        .collect();
+    assert_eq!(inputs.len(), 3);
+    let before: Vec<_> = inputs
+        .iter()
+        .map(|input| {
+            let placement = &frame.placements[input.placement_index];
+            (
+                placement.particles.as_ptr(),
+                placement.ribbons.as_ptr(),
+                placement
+                    .particles
+                    .iter()
+                    .map(|p| p.simulation.particles().to_vec())
+                    .collect::<Vec<_>>(),
+                placement
+                    .ribbons
+                    .iter()
+                    .map(|r| r.sections().cloned().collect::<Vec<_>>())
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+    let budget = cpu.storage().clone();
+    let baseline = budget.snapshot().used(Class::Frame);
+    let saved = std::mem::take(&mut frame.geometry_batch);
+    let batch = &mut frame.geometry_batch;
+    batch.prepare_scratch(cpu)?;
+    batch.begin_metadata(cpu, inputs.len())?;
+    batch.storage = Some(budget.clone());
+    batch.submitted = true;
+    let mut pose = M2BonePose::default();
+    for input in &inputs[..2] {
+        let source = frame.sources[input.source_index].as_ref().ok_or("source")?;
+        batch.queue(
+            *input,
+            &mut frame.placements[input.placement_index],
+            &mut pose,
+            Some(M2BonePoseOverrides::default()),
+            source,
+            camera,
+            M2CameraEffectScale::EXTERNAL_CAMERA,
+            &frame.particle_twinkle,
+        )?;
+        batch.flush_staged()?;
+    }
+    assert_eq!(batch.owned_chunks.len(), 2);
+    assert!(matches!(batch.pending.job(0), Err(CpuError::InvalidJob)));
+    let pressure = budget.reserve(
+        Class::Frame,
+        Kind::Scratch,
+        budget.snapshot().limit(Class::Frame) - budget.snapshot().used(Class::Frame),
+    )?;
+    let input = inputs[2];
+    let source = frame.sources[input.source_index].as_ref().ok_or("source")?;
+    assert!(
+        batch
+            .queue(
+                input,
+                &mut frame.placements[input.placement_index],
+                &mut pose,
+                Some(M2BonePoseOverrides::default()),
+                source,
+                camera,
+                M2CameraEffectScale::EXTERNAL_CAMERA,
+                &frame.particle_twinkle
+            )
+            .is_err()
+    );
+    assert!(matches!(batch.pending.job(0), Err(CpuError::InvalidJob)));
+    for chunk in batch.owned_chunks.iter() {
+        for owner in chunk.jobs.iter() {
+            let job = owner.job();
+            assert!(job.admission.is_some());
+            assert!(job.result.is_none());
+            assert_eq!(job.pose.allocated_bytes(), 0);
+            assert_eq!(job.particle_vertices.capacity(), 0);
+        }
+    }
+    frame.finish_geometry(&mut FrameWait::Offline)?;
+    frame.restore_geometry_states();
+    for (input, (particle_address, ribbon_address, particles, ribbons)) in inputs.iter().zip(before)
+    {
+        let placement = &frame.placements[input.placement_index];
+        assert_eq!(placement.particles.as_ptr(), particle_address);
+        assert_eq!(placement.ribbons.as_ptr(), ribbon_address);
+        for (before, after) in particles.iter().zip(&placement.particles) {
+            assert_eq!(before.as_slice(), after.simulation.particles());
+        }
+        for (before, after) in ribbons.iter().zip(&placement.ribbons) {
+            assert!(before.iter().eq(after.sections()));
+        }
+    }
+    assert!(
+        frame
+            .geometry_batch
+            .jobs
+            .iter()
+            .all(|owner| owner.job().admission.is_none() && owner.job().context.is_none())
+    );
+    drop(std::mem::replace(&mut frame.geometry_batch, saved));
+    drop(pressure);
+    assert_eq!(budget.snapshot().used(Class::Frame), baseline);
     Ok(())
 }
 

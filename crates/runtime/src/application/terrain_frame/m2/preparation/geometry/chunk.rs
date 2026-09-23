@@ -142,7 +142,8 @@ impl GeometryChunk {
 }
 
 impl GeometryBatch {
-    /// Transfer a complete group transactionally; refusal retains every input.
+    /// Retains the funded group until the complete required phase is known.
+    /// Both arrays were admitted with scheduler metadata before input capture.
     pub(super) fn flush_staged(&mut self) -> Result<(), RuntimeTerrainFrameError> {
         if self.staged.jobs.is_empty() {
             return Ok(());
@@ -150,26 +151,34 @@ impl GeometryBatch {
         if !self.submitted {
             return Err(solarity_cpu::CpuError::BatchInactive.into());
         }
-        let cost = self.staged.cost();
+        self.owned_chunks.writer().require(1)?;
+        self.chunk_costs.writer().require(1)?;
         self.staged.scratch = Some(
             self.particle_scratch
                 .as_ref()
                 .unwrap_or_else(|| unreachable!("draw admission owns worker scratch"))
                 .clone(),
         );
+        let cost = self.staged.cost();
         let replacement = self.spare_chunks.pop().unwrap_or_default();
-        let mut owned = Some(std::mem::replace(&mut self.staged, replacement));
-        match self.pending.push_with_cost(&mut owned, cost) {
-            Ok(_) => (),
-            Err(error) => {
-                let retained =
-                    owned.unwrap_or_else(|| unreachable!("refused chunk keeps its state"));
-                self.spare_chunks
-                    .push(std::mem::replace(&mut self.staged, retained))
-                    .unwrap_or_else(|_| unreachable!("admitted spare chunk capacity"));
-                return Err(error.into());
-            }
-        }
+        let owned = std::mem::replace(&mut self.staged, replacement);
+        self.owned_chunks
+            .push(owned)
+            .unwrap_or_else(|_| unreachable!("group storage was preflighted"));
+        self.chunk_costs
+            .push(cost)
+            .unwrap_or_else(|_| unreachable!("group cost storage was preflighted"));
+        Ok(())
+    }
+
+    /// One publication transaction follows complete model-output admission.
+    /// Refusal retains every group, reservation and live input for ordinary return.
+    pub(super) fn publish_groups(&mut self) -> Result<(), RuntimeTerrainFrameError> {
+        self.flush_staged()?;
+        self.pending
+            .push_all_with_cost(&mut self.owned_chunks, &self.chunk_costs)?;
+        self.chunk_costs.clear();
+        self.pending.close();
         Ok(())
     }
 }

@@ -1,4 +1,4 @@
-//! Incremental owned publication and unconditional effect-state return.
+//! Complete required geometry publication and unconditional effect-state return.
 
 use super::super::super::{M2Frame, M2GpuPlacement, RuntimeTerrainFrameError};
 use super::{GeometryBatch, GeometryInput};
@@ -35,6 +35,8 @@ impl M2Frame {
         self.geometry_batch
             .reuse
             .index(&mut self.geometry_batch.jobs);
+        debug_assert!(self.geometry_batch.owned_chunks.is_empty());
+        self.geometry_batch.chunk_costs.clear();
         self.geometry_batch.active = 0;
         self.geometry_batch.published_bones = 0;
         self.geometry_batch.completion = None;
@@ -49,12 +51,10 @@ impl M2Frame {
         self.geometry_batch.completion.clone()
     }
 
-    /// Flushes the final group and seals admission before independent main work so workers publish
-    /// durable phase completion without waiting for main to consume a packet.
+    /// Ordered admission has discovered the full effect tail. Every group's outputs
+    /// and live simulation capacity are funded before the first geometry dispatch.
     pub(in super::super) fn close_geometry(&mut self) -> Result<(), RuntimeTerrainFrameError> {
-        self.geometry_batch.flush_staged()?;
-        self.geometry_batch.pending.close();
-        Ok(())
+        self.geometry_batch.publish_groups()
     }
 
     /// Restores every model on success, validation errors and joined-worker panics.
@@ -87,12 +87,13 @@ impl M2Frame {
             batch.reuse.clear();
             batch.pending.close();
             let readiness = wait.before_reclaim(&batch.pending);
-            let result = batch
-                .pending
-                .reclaim_into(&mut batch.returned_chunks.writer());
+            let result = batch.pending.reclaim_into(&mut batch.owned_chunks.writer());
             batch.submitted = false;
-            let used = batch.returned_chunks.len();
-            for mut chunk in batch.returned_chunks.drain() {
+            batch.chunk_costs.clear();
+            // On failed admission, the same bank still owns undispatched groups.
+            // Atomic publication means these never mix with a submitted prefix.
+            let used = batch.owned_chunks.len();
+            for mut chunk in batch.owned_chunks.drain() {
                 chunk
                     .reclaim(&mut batch.jobs.writer())
                     .unwrap_or_else(|_| unreachable!("admitted model return capacity"));

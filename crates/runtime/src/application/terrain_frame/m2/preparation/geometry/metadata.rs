@@ -34,15 +34,21 @@ impl GeometryBatch {
             self.spare_chunks.replacement_credit(spares),
         )?;
         plan.include(
-            self.returned_chunks
+            self.owned_chunks
                 .reservation_bytes(budget, Class::Frame, maximum)?,
-            self.returned_chunks.replacement_credit(maximum),
+            self.owned_chunks.replacement_credit(maximum),
+        )?;
+        plan.include(
+            self.chunk_costs
+                .reservation_bytes(budget, Class::Frame, maximum)?,
+            self.chunk_costs.replacement_credit(maximum),
         )?;
         let Self {
             reuse,
             jobs: owners,
             spare_chunks,
-            returned_chunks,
+            owned_chunks,
+            chunk_costs,
             pending,
             ..
         } = self;
@@ -55,7 +61,8 @@ impl GeometryBatch {
                 reuse.heads.reserve_reserved(reservation, reuse_count)?;
                 owners.reserve_reserved(reservation, Kind::Metadata, jobs)?;
                 spare_chunks.reserve_reserved(reservation, Kind::Metadata, spares)?;
-                returned_chunks.reserve_reserved(reservation, Kind::Metadata, maximum)?;
+                owned_chunks.reserve_reserved(reservation, Kind::Metadata, maximum)?;
+                chunk_costs.reserve_reserved(reservation, Kind::Metadata, maximum)?;
                 Ok(())
             },
         )?;
@@ -77,7 +84,8 @@ mod tests {
         let budget = cpu.storage().clone();
         let baseline = budget.snapshot().used(Class::Frame);
         let bytes = 3 * size_of::<super::super::GeometryOwner>()
-            + 6 * size_of::<super::super::chunk::GeometryChunk>();
+            + 6 * size_of::<super::super::chunk::GeometryChunk>()
+            + 3 * size_of::<solarity_cpu::JobCost>();
         let pressure = budget.reserve(
             Class::Frame,
             Kind::Scratch,
@@ -91,7 +99,8 @@ mod tests {
         ));
         assert_eq!(batch.jobs.capacity(), 0);
         assert_eq!(batch.spare_chunks.capacity(), 0);
-        assert_eq!(batch.returned_chunks.capacity(), 0);
+        assert_eq!(batch.owned_chunks.capacity(), 0);
+        assert_eq!(batch.chunk_costs.capacity(), 0);
         assert_eq!(budget.snapshot().used(Class::Frame), held);
         assert!(matches!(
             batch.pending.completion(),
@@ -102,11 +111,12 @@ mod tests {
         batch.pending.close();
         batch
             .pending
-            .reclaim_into(&mut batch.returned_chunks.writer())?;
+            .reclaim_into(&mut batch.owned_chunks.writer())?;
         let pointers = (
             batch.jobs.as_ptr(),
             batch.spare_chunks.as_ptr(),
-            batch.returned_chunks.as_ptr(),
+            batch.owned_chunks.as_ptr(),
+            batch.chunk_costs.as_ptr(),
         );
         let pressure = budget.reserve(
             Class::Frame,
@@ -117,12 +127,13 @@ mod tests {
         batch.pending.close();
         batch
             .pending
-            .reclaim_into(&mut batch.returned_chunks.writer())?;
+            .reclaim_into(&mut batch.owned_chunks.writer())?;
         assert_eq!(
             (
                 batch.jobs.as_ptr(),
                 batch.spare_chunks.as_ptr(),
-                batch.returned_chunks.as_ptr()
+                batch.owned_chunks.as_ptr(),
+                batch.chunk_costs.as_ptr()
             ),
             pointers
         );

@@ -19,6 +19,33 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected cutover changes
 
+The complete geometry publication batch now holds every captured model's
+reservation until ordered admission finishes, including the published effect
+tail. Funded groups and cost hints use metadata admitted at phase opening; the
+chunk bank is reused for both pre-publication ownership and terminal return.
+One `push_all_with_cost` publishes the complete set only after all model output,
+simulation, palette-input, shared scratch and scheduler capacity is secured.
+A late capture or publication refusal leaves every group unexecuted and returns
+all live effects through the ordinary reclamation path. Model grouping and
+parallel cost scheduling remain; early geometry overlap with unfinished placement
+admission is deliberately removed to enforce the complete required-phase bound.
+Pose/spatial work and independent main work retain their continuation paths.
+This closes the previously listed geometry-group dispatch admission gap. Broader
+nested-domain accounting, resource lifetimes, overlap and live qualification
+requirements remain open; no measured performance gain is claimed.
+
+Validation records 514 distinct runtime library passes with 30 existing ignores.
+The full run passed 513 tests, including moving-scene serial parity and the new
+late-capture-refusal check after two funded groups. The sole failure was an
+invalid execution-plan configuration in the new atomic-publication fixture;
+after correcting its bulk limit, that test passed on its targeted rerun. Runtime
+all-target/all-feature Clippy with warnings denied, formatting and whitespace
+checks also pass. The publication fixture verifies ordered ownership, no nodes
+before publication, all-or-none closed-batch refusal, and dispatch at zero spare
+metadata headroom. Evidence: `target/geometry-phase-admission-tests.log`,
+`target/geometry-phase-publication-test.log`, and
+`target/geometry-phase-admission-clippy.log`. No package or FPS run was created.
+
 The geometry capture batch moves output admission ahead of each model's live
 input transfer. A single reservation covers copied palette overrides, effect
 record ownership, full palette/draw streams and nested particle/ribbon capacity.

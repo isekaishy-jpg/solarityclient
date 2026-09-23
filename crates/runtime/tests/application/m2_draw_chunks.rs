@@ -85,3 +85,85 @@ fn refused_chunk_submission_keeps_every_unexecuted_model_and_its_charge()
     );
     Ok(())
 }
+
+#[test]
+fn complete_geometry_publication_is_atomic_and_preserves_each_group() -> Result<(), Box<dyn Error>>
+{
+    use solarity_cpu::{CpuError, CpuExecutionPlan, CpuExecutor, CpuPoolConfig, FrameBatch};
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        CpuExecutionPlan::new(2, 1, 1, 1)?,
+        std::num::NonZeroUsize::new(8).ok_or("capacity")?,
+        CpuStoragePlan::new(4 << 20, 4 << 20, 0),
+    ))?;
+    let budget = cpu.storage().clone();
+    let baseline = budget.snapshot().used(CpuStorageClass::Frame);
+    for closed in [false, true] {
+        let mut batch = GeometryBatch {
+            pending: FrameBatch::new(|chunk: &mut GeometryChunk| {
+                for owner in chunk.jobs.iter_mut() {
+                    owner.job_mut().particle_vertex_capacity += 1;
+                }
+            }),
+            ..Default::default()
+        };
+        batch.prepare_scratch(&cpu)?;
+        batch.begin_metadata(&cpu, 3)?;
+        batch.submitted = true;
+        for ordinal in 0..3 {
+            batch.staged.reserve(&budget)?;
+            let mut owner = GeometryOwner::new(&budget)?;
+            owner.job_mut().particle_index_capacity = ordinal;
+            batch.staged.push(owner, cost(ordinal as u64 + 1));
+            batch.flush_staged()?;
+            assert!(matches!(batch.pending.job(0), Err(CpuError::InvalidJob)));
+        }
+        assert_eq!(batch.owned_chunks.len(), 3);
+        let pointers: Vec<_> = batch
+            .owned_chunks
+            .iter()
+            .map(|chunk| chunk.jobs.as_ptr())
+            .collect();
+        let pressure = budget.reserve(
+            CpuStorageClass::Frame,
+            CpuStorageKind::Scratch,
+            budget.snapshot().limit(CpuStorageClass::Frame)
+                - budget.snapshot().used(CpuStorageClass::Frame),
+        )?;
+        if closed {
+            batch.pending.close();
+        }
+        let published = batch.publish_groups();
+        if closed {
+            assert!(matches!(
+                published,
+                Err(
+                    crate::application::terrain_frame::RuntimeTerrainFrameError::Cpu(
+                        CpuError::BatchClosed
+                    )
+                )
+            ));
+            assert_eq!(batch.owned_chunks.len(), 3);
+            assert_eq!(batch.chunk_costs.len(), 3);
+            assert!(matches!(batch.pending.job(0), Err(CpuError::InvalidJob)));
+        } else {
+            published?;
+            assert!(batch.owned_chunks.is_empty());
+            assert!(batch.chunk_costs.is_empty());
+        }
+        batch
+            .pending
+            .reclaim_into(&mut batch.owned_chunks.writer())?;
+        for (ordinal, chunk) in batch.owned_chunks.iter().enumerate() {
+            assert_eq!(chunk.jobs.as_ptr(), pointers[ordinal]);
+            assert_eq!(chunk.jobs[0].job().particle_index_capacity, ordinal);
+            assert_eq!(
+                chunk.jobs[0].job().particle_vertex_capacity,
+                usize::from(!closed)
+            );
+        }
+        drop((batch, pressure));
+        assert_eq!(budget.snapshot().used(CpuStorageClass::Frame), baseline);
+    }
+    cpu.shutdown()?;
+    Ok(())
+}
